@@ -5,6 +5,11 @@ idf_component_register(
         "core/ui_page_manager.c"
         "core/ui_page_registry.c"
         "core/ui_page_stack.c"
-    INCLUDE_DIRS "include"
+        "pages/page_home.c"
+        "pages/page_settings.c"
+        "pages/page_about.c"
+    INCLUDE_DIRS
+        "include"
+        "pages"
     REQUIRES lvgl
 )

@@ -1,7 +1,15 @@
 #include "ui_page_registry.h"
 #include <stddef.h>
 
-static const ui_page_t *s_pages[UI_PAGE_MAX] = {0};
+#include "page_about.h"
+#include "page_home.h"
+#include "page_settings.h"
+
+static const ui_page_t *s_pages[UI_PAGE_MAX] = {
+    [UI_PAGE_HOME] = &g_page_home,
+    [UI_PAGE_SETTINGS] = &g_page_settings,
+    [UI_PAGE_ABOUT] = &g_page_about,
+};
 static const ui_page_id_t s_root_page_id = UI_PAGE_HOME;
 
 const ui_page_t *ui_page_registry_get(ui_page_id_t id)
