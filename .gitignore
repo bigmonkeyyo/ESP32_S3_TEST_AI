@@ -1,0 +1,17 @@
+# ESP-IDF build artifacts
+build/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local backups
+sdkconfig.old
