@@ -16,7 +16,7 @@
 #include "iic.h"
 #include "xl9555.h"
 #include "led.h"
-#include "lvgl_demo.h"
+#include "lvgl_port.h"
 
 
 static const char *TAG = "MAIN";
@@ -42,8 +42,8 @@ void app_main(void)
     i2c0_master = iic_init(I2C_NUM_0); /* 初始化 IIC0 */
     xl9555_init(i2c0_master);           /* 初始化 IO 扩展芯片 */
 
-    ESP_LOGI(TAG, "Starting LVGL port demo...");
-    lvgl_demo();
+    ESP_LOGI(TAG, "Starting LVGL middleware...");
+    lvgl_port_start();
 
     /* 不应运行到这里，保底防止任务返回 */
     while (1)

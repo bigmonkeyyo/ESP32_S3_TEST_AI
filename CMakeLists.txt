@@ -6,8 +6,8 @@ cmake_minimum_required(VERSION 3.5)
 
 # 添加额外组件目录
 set(EXTRA_COMPONENT_DIRS
-    components/Middlewares
-    ${CMAKE_SOURCE_DIR}/lvgl-release-v8.3
+    components/Middlewares/lvgl
+    components/Middlewares/lvgl_port
 )
 add_compile_options(-fdiagnostics-color=always)
 

@@ -1,4 +1,4 @@
-#include "lvgl_demo.h"
+#include "lvgl_port.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -29,7 +29,7 @@ static void lvgl_btn_event_cb(lv_event_t *e);
  * @param       无
  * @retval      无
  */
-void lvgl_demo(void)
+void lvgl_port_start(void)
 {
     const esp_timer_create_args_t lvgl_tick_timer_args = {
         .callback = &lvgl_tick_timer_cb,
