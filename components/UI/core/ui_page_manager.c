@@ -14,6 +14,11 @@
 
 static lv_obj_t *s_page_roots[UI_PAGE_MAX] = {0};
 
+static bool ui_page_transition_busy(void)
+{
+    return lv_disp_get_scr_prev(NULL) != NULL;
+}
+
 static bool ui_page_id_is_valid(ui_page_id_t id)
 {
     return (id >= 0) && (id < UI_PAGE_MAX);
@@ -63,7 +68,7 @@ static void ui_page_delete_root(ui_page_id_t id)
         return;
     }
 
-    lv_obj_del(root);
+    lv_obj_del_async(root);
     s_page_roots[id] = NULL;
 }
 
@@ -81,9 +86,27 @@ static void ui_page_call_show(const ui_page_t *desc, void *args)
     }
 }
 
+static void ui_page_call_destroy_cb(lv_event_t *e)
+{
+    const ui_page_t *desc = (const ui_page_t *)lv_event_get_user_data(e);
+    if ((desc != NULL) && (desc->on_destroy != NULL)) {
+        desc->on_destroy();
+    }
+}
+
+static void ui_page_delete_on_unloaded_cb(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_target(e);
+    if (obj != NULL) {
+        lv_obj_del_async(obj);
+    }
+}
+
 static void ui_page_destroy_if_needed(const ui_page_t *desc)
 {
     lv_obj_t *root = NULL;
+    lv_obj_t *active = NULL;
+    lv_obj_t *prev = NULL;
 
     if ((desc == NULL) || !ui_page_id_is_valid(desc->id)) {
         return;
@@ -98,11 +121,26 @@ static void ui_page_destroy_if_needed(const ui_page_t *desc)
         return;
     }
 
-    if (desc->on_destroy != NULL) {
-        desc->on_destroy();
+    active = lv_scr_act();
+    prev = lv_disp_get_scr_prev(NULL);
+
+    /*
+     * Execute page on_destroy only when LVGL really deletes the screen object.
+     * Calling on_destroy too early can invalidate page context while unload events are still running.
+     */
+    lv_obj_add_event_cb(root, ui_page_call_destroy_cb, LV_EVENT_DELETE, (void *)desc);
+
+    if ((root == active) || (root == prev)) {
+        /*
+         * Animated screen loads keep the outgoing screen as active until LVGL's
+         * animation start callback runs. Delete it only after LVGL announces it
+         * is unloaded.
+         */
+        lv_obj_add_event_cb(root, ui_page_delete_on_unloaded_cb, LV_EVENT_SCREEN_UNLOADED, NULL);
+    } else {
+        lv_obj_del_async(root);
     }
 
-    lv_obj_del(root);
     s_page_roots[desc->id] = NULL;
 }
 
@@ -130,6 +168,11 @@ esp_err_t ui_page_push(ui_page_id_t id, void *args, ui_anim_t anim)
     const bool to_page_preexisting = ui_page_id_is_valid(id) && (s_page_roots[id] != NULL);
     bool from_page_hidden = false;
     esp_err_t err;
+
+    if (ui_page_transition_busy()) {
+        ESP_LOGW(UI_MGR_TAG, "drop PUSH while transition busy, id=%ld", (long)id);
+        return ESP_ERR_INVALID_STATE;
+    }
 
     if (to_desc == NULL) {
         return ESP_ERR_NOT_FOUND;
@@ -171,6 +214,11 @@ esp_err_t ui_page_pop(ui_anim_t anim)
     const ui_page_t *current_desc = NULL;
     const ui_page_t *target_desc = NULL;
     esp_err_t err;
+
+    if (ui_page_transition_busy()) {
+        ESP_LOGW(UI_MGR_TAG, "drop POP while transition busy");
+        return ESP_ERR_INVALID_STATE;
+    }
 
     if (ui_page_stack_depth() <= 1) {
         return ESP_ERR_INVALID_STATE;
@@ -235,6 +283,11 @@ esp_err_t ui_page_replace(ui_page_id_t id, void *args, ui_anim_t anim)
     const ui_page_t *new_desc = ui_page_get_desc_or_log(id);
     esp_err_t err;
 
+    if (ui_page_transition_busy()) {
+        ESP_LOGW(UI_MGR_TAG, "drop REPLACE while transition busy, id=%ld", (long)id);
+        return ESP_ERR_INVALID_STATE;
+    }
+
     if (new_desc == NULL) {
         return ESP_ERR_NOT_FOUND;
     }
@@ -293,7 +346,22 @@ esp_err_t ui_page_back_to_root(ui_anim_t anim)
 {
     esp_err_t err = ESP_OK;
 
-    while (ui_page_stack_depth() > 1) {
+    if (ui_page_transition_busy()) {
+        ESP_LOGW(UI_MGR_TAG, "drop BACK_TO_ROOT while transition busy");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* Pop intermediate pages without animation to avoid stacking multiple screen-load animations.
+     * Keep only the final transition animated (current -> root), which is safer on LVGL screen lifecycle.
+     */
+    while (ui_page_stack_depth() > 2) {
+        err = ui_page_pop(UI_ANIM_NONE);
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+
+    if (ui_page_stack_depth() > 1) {
         err = ui_page_pop(anim);
         if (err != ESP_OK) {
             return err;

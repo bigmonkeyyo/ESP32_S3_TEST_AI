@@ -1,5 +1,9 @@
 # ESP-IDF build artifacts
 build/
+simulator/build/
+simulator/output/
+simulator/shots/
+tmp/
 
 # IDE/editor
 .vscode/
@@ -15,3 +19,4 @@ Thumbs.db
 
 # Local backups
 sdkconfig.old
+*.bak

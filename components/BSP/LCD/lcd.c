@@ -24,6 +24,8 @@
 
 
 static const char *TAG = "LCD";
+#define LCD_I80_PCLK_HZ (20 * 1000 * 1000)
+
 esp_lcd_panel_handle_t panel_handle = NULL; /* LCD句柄 */
 uint32_t g_back_color  = 0xFFFF;
 lcd_obj_t lcd_dev;
@@ -658,7 +660,7 @@ void lcd_init(lcd_cfg_t lcd_config)
 
     esp_lcd_panel_io_i80_config_t io_config = {                     /* 80并口配置 */
         .cs_gpio_num = lcd_dev.cs,
-        .pclk_hz = (10 * 1000 * 1000),
+        .pclk_hz = LCD_I80_PCLK_HZ,
         .trans_queue_depth = 10,
         .dc_levels = {
             .dc_idle_level = 0,
@@ -691,6 +693,5 @@ void lcd_init(lcd_cfg_t lcd_config)
     esp_lcd_panel_io_tx_param(io_handle, 0x3A, (uint8_t[]) {0x65}, 1);
     lcd_display_dir(1);                                                 /* 设置屏幕方向 */
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));     /* 启动屏幕 */
-    lcd_clear(WHITE);                                                   /* 默认填充白色 */
-    LCD_BL(1);                                                          /* 打开背光 */
+    LCD_BL(0);                                                          /* 先关闭背光，待首帧后点亮 */
 }

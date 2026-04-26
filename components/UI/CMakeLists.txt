@@ -1,4 +1,4 @@
-idf_component_register(
+﻿idf_component_register(
     SRCS
         "core/ui.c"
         "core/ui_page_anim.c"
@@ -7,7 +7,16 @@ idf_component_register(
         "core/ui_page_stack.c"
         "pages/page_home.c"
         "pages/page_settings.c"
+        "pages/page_status.c"
+        "pages/page_wifi.c"
         "pages/page_about.c"
+        "fonts/generated/ui_font_sc_11.c"
+        "fonts/generated/ui_font_sc_12.c"
+        "fonts/generated/ui_font_sc_13.c"
+        "fonts/generated/ui_font_sc_14.c"
+        "fonts/generated/ui_font_sc_18.c"
+        "fonts/generated/ui_font_sc_24.c"
+        "fonts/generated/ui_font_sc_30.c"
     INCLUDE_DIRS
         "include"
         "pages"

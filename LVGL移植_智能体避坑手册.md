@@ -126,3 +126,64 @@ foreach($line in $kv){
 - 本工程目录不是 git 仓库（`git status` 会失败），不要依赖 git 回滚。
 - 串口调试优先“短时抓日志+关键字校验”，避免长时间 monitor 占资源。
 - 若后续打开 LVGL 官方 demo（如 `lv_demo_music`），记得同步启用对应字体和 demo 配置，否则编译会报符号/字体缺失。
+
+---
+
+## 9. 页面切换返回卡死（2026-04-25）
+- 症状：进入 `Settings` 页面后，点击 `Back` 返回主界面出现卡死，随后可能复位。
+- 复现路径：`Home -> Settings -> Back`。
+- 断点证据链（OpenOCD + GDB）：
+  - `page_settings_back_cb`
+  - `ui_page_pop`
+  - `ui_page_destroy_if_needed`
+  - 随后在 `lv_obj_update_layout` 路径异常停住。
+- 根因：页面切换动画仍在进行时，旧页面对象删除时机过早，触发 LVGL 布局/事件路径竞态。
+- 修复：
+  - 旧页面销毁由立即/异步删除改为延时删除：`lv_obj_del_delayed(..., 260ms)`。
+  - 规则：删除延时必须满足 `>= 动画时长 + 安全裕量`。
+- 代码位置：
+  - `components/UI/core/ui_page_manager.c`
+- 回归建议：
+  - 连续 100 次 `Home -> Settings/About -> Back`。
+  - 冷启动 10 次确认无卡死/复位。
+  - 动画高频操作 10 分钟确认稳定。
+---
+
+## 10. 2026-04-26 补充（卡死复位 + UI显示不全）
+
+> 本次专题完整版：`LVGL_UI_编译烧录调试与避坑经验.md`
+
+### 10.1 编译/烧录固定流程（推荐）
+
+- 固定使用 ESP-IDF 5.2.1 + 指定 Python 执行 `idf.py`，避免环境漂移。
+- 编译：
+  - `$env:IDF_PATH='D:\esp32\Espressif\frameworks\esp-idf-v5.2.1'`
+  - `D:\esp32\Espressif\python_env\idf5.1_py3.11_env\Scripts\python.exe $env:IDF_PATH\tools\idf.py ... build`
+- 烧录：
+  - 同上环境，执行 `idf.py ... -p COMx -b 460800 flash`
+
+### 10.2 卡死复位问题（已修复）
+
+- 复现路径：`首页 -> 设置 -> 设备状态 -> 返回首页`
+- 调试结论：崩溃位于 `LV_EVENT_SCREEN_UNLOADED` 生命周期路径，属于旧屏销毁时序竞态。
+- 修复要点：
+  - `UI_ANIM_NONE` 使用立即切屏（避免中间层叠动画）。
+  - 页面销毁策略改为“在 `LV_EVENT_SCREEN_UNLOADED` 后异步删除旧屏”。
+  - 禁止在销毁路径误删当前 `active screen`。
+
+### 10.3 UI显示不完整问题（已收敛）
+
+- 统一采用 `Header + ScrollView + Footer` 三段式布局。
+- 内容超出高度时仅放入 `ScrollView`，底部按钮区固定保留。
+- 适当移除非关键装饰区，优先保证按钮、状态信息、返回控件完整显示。
+- 子页面返回按钮采用隐式文本按钮，减少头部挤占。
+
+### 10.4 后续智能体执行顺序（强制建议）
+
+1. 模拟器先完成UI开发与截图对比。
+2. 再迁移到实机工程。
+3. 编译烧录后，至少回归这三条路径：
+   - `首页 -> 设置 -> 返回`
+   - `首页 -> 设置 -> 设备状态 -> 返回首页`
+   - `首页 -> 设置 -> WiFi -> 返回`
+4. 若出现卡死/复位，先抓JTAG栈，再改代码，不盲调布局。

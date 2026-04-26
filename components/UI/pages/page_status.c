@@ -1,22 +1,17 @@
-﻿#include "page_settings.h"
+﻿#include "page_status.h"
 
 #include <stdbool.h>
-#include <stdint.h>
 
+#include "esp_log.h"
 #include "ui_fonts.h"
 #include "ui_page_manager.h"
 
 static lv_obj_t *s_screen = NULL;
-static lv_obj_t *s_location_label = NULL;
-static bool s_nav_pending = false;
+static lv_obj_t *s_runtime_label = NULL;
+static lv_obj_t *s_sync_label = NULL;
+static bool s_back_home_pending = false;
 
-static char s_location[32] = "上海 · 浦东新区";
-
-typedef enum {
-    SETTINGS_NAV_BACK = 0,
-    SETTINGS_NAV_WIFI,
-    SETTINGS_NAV_STATUS,
-} settings_nav_action_t;
+static const char *TAG = "PAGE_STATUS";
 
 static lv_color_t c_hex(uint32_t rgb)
 {
@@ -58,29 +53,7 @@ static lv_obj_t *create_round_button(
     return btn;
 }
 
-static lv_obj_t *create_header_back_text_btn(lv_obj_t *parent, const char *text, lv_coord_t w)
-{
-    lv_obj_t *btn = lv_btn_create(parent);
-    lv_obj_t *lbl = lv_label_create(btn);
-
-    lv_obj_remove_style_all(btn);
-    lv_obj_set_size(btn, w, 24);
-    lv_obj_align(btn, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_set_style_shadow_width(btn, 0, 0);
-    lv_obj_set_style_outline_width(btn, 0, 0);
-    lv_obj_set_style_pad_all(btn, 0, 0);
-    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_label_set_text(lbl, text);
-    set_label_font_color(lbl, &ui_font_sc_13, 0x6A7E95);
-    lv_obj_center(lbl);
-
-    return btn;
-}
-
-static lv_obj_t *create_settings_row(
+static lv_obj_t *create_status_row(
     lv_obj_t *parent,
     lv_coord_t y,
     uint32_t dot_color,
@@ -101,7 +74,6 @@ static lv_obj_t *create_settings_row(
     lv_obj_set_style_border_color(row, c_hex(0xD7E7F8), 0);
     lv_obj_set_style_border_width(row, 1, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
-    lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_set_size(dot, 8, 8);
@@ -126,81 +98,60 @@ static lv_obj_t *create_settings_row(
     return row;
 }
 
-static void page_settings_nav_async(void *user_data)
+static void page_status_back_home_async(void *user_data)
 {
-    const settings_nav_action_t action = (settings_nav_action_t)(uintptr_t)user_data;
+    (void)user_data;
 
-    switch (action) {
-        case SETTINGS_NAV_BACK:
-            (void)ui_page_pop(UI_ANIM_MOVE_RIGHT);
-            break;
-        case SETTINGS_NAV_WIFI:
-            (void)ui_page_push(UI_PAGE_WIFI, NULL, UI_ANIM_MOVE_LEFT);
-            break;
-        case SETTINGS_NAV_STATUS:
-            (void)ui_page_push(UI_PAGE_STATUS, NULL, UI_ANIM_MOVE_LEFT);
-            break;
-        default:
-            break;
+    if (ui_page_back_to_root(UI_ANIM_MOVE_RIGHT) != ESP_OK) {
+        ESP_LOGW(TAG, "ui_page_back_to_root failed");
     }
 
-    s_nav_pending = false;
+    s_back_home_pending = false;
 }
 
-static void page_settings_schedule_nav(settings_nav_action_t action)
-{
-    if (s_nav_pending) {
-        return;
-    }
-
-    s_nav_pending = true;
-    if (lv_async_call(page_settings_nav_async, (void *)(uintptr_t)action) != LV_RES_OK) {
-        s_nav_pending = false;
-    }
-}
-
-static void page_settings_back_cb(lv_event_t *e)
+static void page_status_home_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
         return;
     }
 
-    page_settings_schedule_nav(SETTINGS_NAV_BACK);
+    if (s_back_home_pending) {
+        return;
+    }
+
+    s_back_home_pending = true;
+    if (lv_async_call(page_status_back_home_async, NULL) != LV_RES_OK) {
+        s_back_home_pending = false;
+        ESP_LOGW(TAG, "lv_async_call failed");
+    }
 }
 
-static void page_settings_open_wifi_cb(lv_event_t *e)
+static void page_status_refresh_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
         return;
     }
 
-    page_settings_schedule_nav(SETTINGS_NAV_WIFI);
-}
-
-static void page_settings_open_status_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
-        return;
+    if (s_runtime_label != NULL) {
+        lv_label_set_text(s_runtime_label, "03:27:52");
     }
-
-    page_settings_schedule_nav(SETTINGS_NAV_STATUS);
+    if (s_sync_label != NULL) {
+        lv_label_set_text(s_sync_label, "14:28:00");
+    }
 }
 
-static lv_obj_t *page_settings_create(void)
+static lv_obj_t *page_status_create(void)
 {
     lv_obj_t *header = NULL;
+    lv_obj_t *tag = NULL;
+    lv_obj_t *lbl = NULL;
     lv_obj_t *scroll_view = NULL;
     lv_obj_t *scroll_content = NULL;
-    lv_obj_t *row = NULL;
-    lv_obj_t *footer = NULL;
-    lv_obj_t *btn = NULL;
-    lv_obj_t *tag = NULL;
-    lv_obj_t *tag_text = NULL;
     lv_obj_t *scroll_track = NULL;
     lv_obj_t *scroll_thumb = NULL;
-    lv_obj_t *lbl = NULL;
+    lv_obj_t *footer = NULL;
+    lv_obj_t *btn = NULL;
 
-    s_nav_pending = false;
     s_screen = lv_obj_create(NULL);
     lv_obj_set_style_radius(s_screen, 14, 0);
     lv_obj_set_style_bg_color(s_screen, c_hex(0xE7F4FF), 0);
@@ -222,19 +173,16 @@ static lv_obj_t *page_settings_create(void)
     lv_obj_set_style_pad_all(header, 0, 0);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
-    btn = create_header_back_text_btn(header, "← 返回", 64);
-    lv_obj_add_event_cb(btn, page_settings_back_cb, LV_EVENT_CLICKED, NULL);
-
     lbl = lv_label_create(header);
-    lv_label_set_text(lbl, "设置");
+    lv_label_set_text(lbl, "设备状态");
     set_label_font_color(lbl, &ui_font_sc_18, 0x1C2A3A);
-    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_pos(lbl, 0, 4);
 
     tag = lv_obj_create(header);
-    lv_obj_set_pos(tag, 244, 6);
+    lv_obj_set_pos(tag, 252, 6);
     lv_obj_set_size(tag, LV_SIZE_CONTENT, 22);
     lv_obj_set_style_radius(tag, 999, 0);
-    lv_obj_set_style_bg_color(tag, c_hex(0xE8F2FF), 0);
+    lv_obj_set_style_bg_color(tag, c_hex(0xDDF8E8), 0);
     lv_obj_set_style_border_width(tag, 0, 0);
     lv_obj_set_style_pad_left(tag, 8, 0);
     lv_obj_set_style_pad_right(tag, 8, 0);
@@ -242,10 +190,10 @@ static lv_obj_t *page_settings_create(void)
     lv_obj_set_style_pad_bottom(tag, 4, 0);
     lv_obj_clear_flag(tag, LV_OBJ_FLAG_SCROLLABLE);
 
-    tag_text = lv_label_create(tag);
-    lv_label_set_text(tag_text, "可滚动");
-    set_label_font_color(tag_text, &ui_font_sc_12, 0x3F6FA6);
-    lv_obj_center(tag_text);
+    lbl = lv_label_create(tag);
+    lv_label_set_text(lbl, "在线");
+    set_label_font_color(lbl, &ui_font_sc_12, 0x17743D);
+    lv_obj_center(lbl);
 
     scroll_view = lv_obj_create(s_screen);
     lv_obj_set_pos(scroll_view, 12, 50);
@@ -258,27 +206,19 @@ static lv_obj_t *page_settings_create(void)
 
     scroll_content = lv_obj_create(scroll_view);
     lv_obj_set_pos(scroll_content, 0, 0);
-    lv_obj_set_size(scroll_content, 296, 302);
+    lv_obj_set_size(scroll_content, 296, 352);
     lv_obj_set_style_bg_opa(scroll_content, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(scroll_content, 0, 0);
     lv_obj_set_style_pad_all(scroll_content, 0, 0);
     lv_obj_clear_flag(scroll_content, LV_OBJ_FLAG_SCROLLABLE);
 
-    row = create_settings_row(scroll_content, 0, 0x3D8BFF, "WiFi连接", "点击进入扫描", 0x3D8BFF, NULL);
-    lv_obj_add_event_cb(row, page_settings_open_wifi_cb, LV_EVENT_CLICKED, NULL);
-
-    row = create_settings_row(scroll_content, 50, 0xFF9F43, "使用地点", s_location, 0x1C2A3A, &s_location_label);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
-
-    row = create_settings_row(scroll_content, 100, 0x2BC670, "设备状态", "在线 / 正常", 0x2BC670, NULL);
-    lv_obj_add_event_cb(row, page_settings_open_status_cb, LV_EVENT_CLICKED, NULL);
-
-    row = create_settings_row(scroll_content, 150, 0x3D8BFF, "天气刷新频率", "每15分钟", 0x5F738C, NULL);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
-    row = create_settings_row(scroll_content, 200, 0x3D8BFF, "语言", "简体中文", 0x5F738C, NULL);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
-    row = create_settings_row(scroll_content, 250, 0x3D8BFF, "时区", "Asia/Shanghai", 0x5F738C, NULL);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    create_status_row(scroll_content, 0, 0xFF9F43, "供电状态", "USB 5V / 0.42A", 0x1C2A3A, NULL);
+    create_status_row(scroll_content, 50, 0x2BC670, "WiFi信号", "-54 dBm", 0x2BC670, NULL);
+    create_status_row(scroll_content, 100, 0x3D8BFF, "IP地址", "192.168.1.43", 0x1C2A3A, NULL);
+    create_status_row(scroll_content, 150, 0xFF9F43, "固件版本", "v1.2.7", 0x1C2A3A, NULL);
+    create_status_row(scroll_content, 200, 0x2BC670, "运行时长", "03:27:51", 0x1C2A3A, &s_runtime_label);
+    create_status_row(scroll_content, 250, 0x3D8BFF, "内存占用", "63%", 0x5F738C, NULL);
+    create_status_row(scroll_content, 300, 0x3D8BFF, "上次同步", "14:20:33", 0x5F738C, &s_sync_label);
 
     scroll_track = lv_obj_create(s_screen);
     lv_obj_set_pos(scroll_track, 305, 62);
@@ -306,32 +246,28 @@ static lv_obj_t *page_settings_create(void)
     lv_obj_set_style_pad_all(footer, 0, 0);
     lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
 
-    btn = create_round_button(footer, 0, 0, 198, 38, 0x3D8BFF, "保存并返回", &ui_font_sc_14);
-    lv_obj_add_event_cb(btn, page_settings_back_cb, LV_EVENT_CLICKED, NULL);
-
-    btn = create_round_button(footer, 206, 0, 90, 38, 0x15B7D9, "WiFi", &ui_font_sc_14);
-    lv_obj_add_event_cb(btn, page_settings_open_wifi_cb, LV_EVENT_CLICKED, NULL);
-
-    if (s_location_label != NULL) {
-        lv_label_set_text(s_location_label, s_location);
-    }
+    btn = create_round_button(footer, 0, 0, 144, 38, 0x15B7D9, "刷新状态", &ui_font_sc_14);
+    lv_obj_add_event_cb(btn, page_status_refresh_cb, LV_EVENT_CLICKED, NULL);
+    btn = create_round_button(footer, 152, 0, 144, 38, 0x3D8BFF, "返回首页", &ui_font_sc_14);
+    lv_obj_add_event_cb(btn, page_status_home_cb, LV_EVENT_CLICKED, NULL);
 
     return s_screen;
 }
 
-static void page_settings_on_destroy(void)
+static void page_status_on_destroy(void)
 {
     s_screen = NULL;
-    s_location_label = NULL;
-    s_nav_pending = false;
+    s_runtime_label = NULL;
+    s_sync_label = NULL;
+    s_back_home_pending = false;
 }
 
-const ui_page_t g_page_settings = {
-    .id = UI_PAGE_SETTINGS,
-    .name = "SETTINGS",
-    .cache_mode = UI_PAGE_CACHE_KEEP,
-    .create = page_settings_create,
+const ui_page_t g_page_status = {
+    .id = UI_PAGE_STATUS,
+    .name = "STATUS",
+    .cache_mode = UI_PAGE_CACHE_NONE,
+    .create = page_status_create,
     .on_show = NULL,
     .on_hide = NULL,
-    .on_destroy = page_settings_on_destroy,
+    .on_destroy = page_status_on_destroy,
 };
