@@ -117,6 +117,7 @@ static void lvgl_port_indev_init(void)
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = lvgl_touch_read_cb;
+    indev_drv.scroll_limit = 3;
     lv_indev_drv_register(&indev_drv);
 }
 

@@ -9,7 +9,7 @@
 - 屏幕分辨率：`320 x 240`（横屏）
 - UI框架：LVGL 多页面管理（`ui_page_manager`）
 - 调试方式：`OpenOCD + xtensa-esp32s3-elf-gdb`（USB-JTAG）或串口日志
-- 当前实机串口：`USB-Enhanced-SERIAL CH343 (COM8)`，可同时用于烧录和日志抓取
+- 当前实机串口：远端设备使用 `USB-Enhanced-SERIAL CH343 (COM7)`，可用于烧录和日志抓取
 
 ## 3. 编译与烧录稳定SOP（推荐固定做法）
 
@@ -109,9 +109,9 @@ $env:IDF_PATH='D:\esp32\Espressif\frameworks\esp-idf-v5.2.1'
 ```powershell
 cmd /c "call D:\esp32\Espressif\idf_cmd_init.bat esp-idf-9df0ad0b8292cf243ded566bf3cb03fd && idf.py --no-hints --no-ccache -C D:\11\ESP32PRO\ESP32_S3_TEST_AI build"
 ```
-- 烧录命令（COM8）：
+- 烧录命令（COM7）：
 ```powershell
-cmd /c "call D:\esp32\Espressif\idf_cmd_init.bat esp-idf-9df0ad0b8292cf243ded566bf3cb03fd && idf.py --no-hints --no-ccache -C D:\11\ESP32PRO\ESP32_S3_TEST_AI -p COM8 -b 460800 flash"
+cmd /c "call D:\esp32\Espressif\idf_cmd_init.bat esp-idf-9df0ad0b8292cf243ded566bf3cb03fd && idf.py --no-hints --no-ccache -C D:\11\ESP32PRO\ESP32_S3_TEST_AI -p COM7 -b 460800 flash"
 ```
 - 串口排查原则：复现卡死后优先抓完整日志，再用 backtrace 地址做 addr2line；如果日志里出现 `skip destroy active screen`，优先检查 `ui_page_destroy_if_needed(...)` 的卸载后删除逻辑。
 
@@ -213,7 +213,7 @@ cmd /c "call D:\esp32\Espressif\idf_cmd_init.bat esp-idf-9df0ad0b8292cf243ded566
 - 每次只改一个性能变量，烧录后必须跑固定路径回归。
 - 改 `sdkconfig` 会触发 ESP-IDF reconfigure，可能接近全量编译；命令超时时间至少给 `600000 ms`（10分钟）。
 - 普通 `.c` 小改动可以直接 `idf.py build` 增量编译，通常会快很多。
-- 烧录后先抓 COM8 串口日志，再主观判断流畅度。
+- 烧录后先抓 COM7 串口日志，再主观判断流畅度。
 - 若串口出现 `task_wdt`、`backtrace` 或 10 秒完全无输出，立即停止继续优化并回退最近一次变量。
 - 不要通过删除 UI 视觉效果来换帧率，除非用户明确允许改界面渲染。
 
@@ -221,13 +221,15 @@ cmd /c "call D:\esp32\Espressif\idf_cmd_init.bat esp-idf-9df0ad0b8292cf243ded566
 
 ### 最终实机确认可用配置
 - 当前已烧录并通过串口回归的配置：
-  - `CONFIG_LV_DISP_DEF_REFR_PERIOD=10`
+  - `CONFIG_LV_DISP_DEF_REFR_PERIOD=8`
   - `CONFIG_LV_INDEV_DEF_READ_PERIOD=6`
   - `CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240`
   - `CONFIG_FREERTOS_HZ=100`
   - `CONFIG_ESP_MAIN_TASK_AFFINITY=0x0`
   - `LVGL_DRAW_BUF_LINES=120`
   - `LCD_I80_PCLK_HZ=20MHz`
+  - `lv_indev_drv_t.scroll_limit=3`
+  - `CONFIG_LV_USE_PERF_MONITOR` / `CONFIG_LV_USE_MEM_MONITOR` 最终已关闭，仅 Step 13-16 调试期间临时打开。
 - 验证路径：
   - `首页 -> 设置 -> WiFi -> 返回设置 -> 设备状态 -> 返回首页`
   - 多次 `首页 -> 设备状态 -> 返回首页`
@@ -240,7 +242,7 @@ cmd /c "call D:\esp32\Espressif\idf_cmd_init.bat esp-idf-9df0ad0b8292cf243ded566
   - `abort`
   - `skip destroy active screen`
   - `SCREEN_UNLOADED`
-- 当前结论：Step 11、Step 12 串口关键异常词均无命中，用户实机确认“可以了”。
+- 当前结论：Step 16 串口关键异常词无命中，用户实机确认设置页滑动跟手感“可以了”。
 
 ### 本轮推进步骤
 1. Step 5：曾尝试激进组合，包含 PCLK 提升到 `30MHz`、buffer 提升、触摸周期降低。
@@ -270,6 +272,24 @@ cmd /c "call D:\esp32\Espressif\idf_cmd_init.bat esp-idf-9df0ad0b8292cf243ded566
 8. Step 12：仅提升触摸读取，`CONFIG_LV_INDEV_DEF_READ_PERIOD 8 -> 6`。
    - 结果：编译、烧录、串口验证通过。
    - 日志：`tmp\step12_refr10_touch6_buf120_pclk20_verify.log`
+9. Step 13：临时打开 LVGL FPS 与内存占用监控显示。
+   - 目的：让实机直接观察帧率和 LVGL 内存占用。
+   - 结果：编译、烧录、串口验证通过，无异常关键字。
+   - 日志：`tmp\step13_lvgl_perf_mem_monitor_com7.log`
+   - 最终处理：调试结束后已关闭监控显示，避免遮挡正式 UI。
+10. Step 14：仅提升显示刷新，`CONFIG_LV_DISP_DEF_REFR_PERIOD 10 -> 8`。
+   - 结果：编译、烧录、串口验证通过，无异常关键字。
+   - 日志：`tmp\step14_refr8_perf_mem_monitor_com7.log`
+   - 结论：页面切换体感已可接受，保留 `8ms`。
+11. Step 15：尝试降低 CHSC5xxx 空闲触摸扫描限流，`t % 5 -> t % 2`。
+   - 结果：编译、烧录、串口验证通过，但用户反馈设置页滑动体感变化不明显。
+   - 日志：`tmp\step15_touch_scan_throttle2_refr8_com7.log`
+   - 结论：该改动主要影响空闲后首次点按，对按住滑动收益不明显，已回退。
+12. Step 16：仅降低 LVGL 滚动启动阈值，`lv_indev_drv_t.scroll_limit 10px -> 3px`。
+   - 结果：编译、烧录、串口验证通过，无异常关键字。
+   - 日志：`tmp\step16_scroll_limit3_refr8_com7.log`
+   - 用户反馈：设置页滑动选项栏跟手感可以了。
+   - 结论：保留 `scroll_limit=3`，这是针对小屏触摸滚动启动迟滞的有效优化。
 
 ### 本轮踩坑与经验
 - `LCD_I80_PCLK_HZ=30MHz` 是明确踩坑项：
@@ -286,6 +306,10 @@ cmd /c "call D:\esp32\Espressif\idf_cmd_init.bat esp-idf-9df0ad0b8292cf243ded566
 - 触摸读取 `6ms` 当前可用：
   - 能改善点击和滑动跟手感。
   - 继续低于 `6ms` 可能带来无意义轮询和 CPU 占用增加，收益可能变小。
+- LVGL 指针滚动启动阈值 `scroll_limit=3` 当前可用：
+  - 默认 `10px` 在 2.4 寸屏上会让设置页列表滑动起步显得迟钝。
+  - 降到 `3px` 后，用户确认设置页滑动跟手感可以了。
+  - 若后续出现轻点误判为滑动，再单独回调到 `5px` 验证，不要同时改触摸周期或刷新周期。
 - FreeRTOS tick、task affinity 暂时不要再碰：
   - 之前激进组合里包含过 `CONFIG_FREERTOS_HZ=1000` 和 main task 切核，风险大、收益不直观。
   - 当前稳定路线已经能继续推进刷新/触摸/buffer，不需要先改调度基础。
@@ -297,8 +321,8 @@ cmd /c "call D:\esp32\Espressif\idf_cmd_init.bat esp-idf-9df0ad0b8292cf243ded566
 ### 当前建议
 - 当前版本已经进入相对激进但可运行的状态，不建议继续盲目加速。
 - 如果后续还要压榨流畅度，优先顺序建议：
-  1. 只测 `CONFIG_LV_DISP_DEF_REFR_PERIOD 10 -> 8`。
-  2. 或只测 `LVGL_DRAW_BUF_LINES 120 -> 160`，但必须先看内存余量。
+  1. 保持当前 `CONFIG_LV_DISP_DEF_REFR_PERIOD=8` 与 `scroll_limit=3`，先不要继续盲目加速。
+  2. 如仍需进一步压榨，只测 `LVGL_DRAW_BUF_LINES 120 -> 160`，但必须先看内存余量。
   3. 不要测 PCLK 30MHz，除非本轮任务目标改成 LCD 总线专项排查。
 
 ## 8. 后续智能体执行清单（建议复制到任务模板）
@@ -310,12 +334,12 @@ cmd /c "call D:\esp32\Espressif\idf_cmd_init.bat esp-idf-9df0ad0b8292cf243ded566
    - `首页 -> 设置 -> WiFi -> 返回`
    - `首页 -> 设置 -> WiFi -> 返回设置 -> 设备状态 -> 返回首页`
 5. 若出现复位或卡死，先抓 GDB 栈，不要盲改样式代码。
-6. 若有串口条件，优先用当前 COM8 抓实机日志，重点搜索 `task_wdt`、`backtrace`、`skip destroy active screen`、`SCREEN_UNLOADED`。
-7. 刷新率优化必须按第 7 节单变量推进；当前最终实机确认配置见 7.6：显示 `10ms`、触摸 `6ms`、CPU `240MHz`、PCLK `20MHz`、buffer `120` 行。
+6. 若有串口条件，优先用当前 COM7 抓实机日志，重点搜索 `task_wdt`、`backtrace`、`skip destroy active screen`、`SCREEN_UNLOADED`。
+7. 刷新率优化必须按第 7 节单变量推进；当前最终实机确认配置见 7.6：显示 `8ms`、触摸 `6ms`、CPU `240MHz`、PCLK `20MHz`、buffer `120` 行、滚动阈值 `3px`。
 
 ## 9. 结论
 - 本次卡死复位已通过“页面销毁时机重构 + active/prev 统一卸载后删除”解决。
-- 刷新率优化已完成 Step 1 至 Step 12，当前稳定进度为 LVGL 显示刷新 `10ms` + 触摸读取 `6ms` + CPU `240MHz` + PCLK `20MHz` + buffer `120` 行。
+- 刷新率与触摸跟手优化已完成 Step 1 至 Step 16，当前稳定进度为 LVGL 显示刷新 `8ms` + 触摸读取 `6ms` + CPU `240MHz` + PCLK `20MHz` + buffer `120` 行 + 滚动阈值 `3px`。
 - 编译烧录与调试链路已有稳定 SOP。
 - UI显示不完整问题已有可复用布局规范。
 - 后续开发请优先复用本手册流程，可显著降低回归风险。
