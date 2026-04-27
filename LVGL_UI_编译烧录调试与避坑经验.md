@@ -244,6 +244,52 @@ cmd /c "call D:\esp32\Espressif\idf_cmd_init.bat esp-idf-9df0ad0b8292cf243ded566
   - `SCREEN_UNLOADED`
 - 当前结论：Step 16 串口关键异常词无命中，用户实机确认设置页滑动跟手感“可以了”。
 
+## 8. 后端 V1 接入记录（2026-04-27）
+
+### 8.1 本次已验证证据
+- 工程路径：`D:\ESP32-APP\18_touch`
+- 分支：`feat/lvgl-ui-page-framework`
+- 构建命令使用 ESP-IDF Python 直调 `idf.py`，因为 `idf_cmd_init.bat` 在本机本次输出过 `'null' is not recognized` 且未把 `idf.py` 放进 PATH。
+- 编译通过：
+  - `build/18_touch.elf`
+  - `build/18_touch.bin`
+  - 当前 bin 大小：`0x17ff40`
+- 烧录 COM7 通过：
+  - `Hash of data verified`
+  - `Hard resetting via RTS pin`
+- 最终串口日志：
+  - `tmp/backend_v1_final_boot_com7.log`
+- 已出现关键日志：
+  - `APP_BACKEND: backend started`
+  - `APP_BACKEND: APP_BACKEND_SELFTEST: store PASS`
+  - `UI_BINDING: snapshot applied`
+  - `BACKEND_WIFI: scan start`
+  - `BACKEND_WIFI: scan done, ap_count=8`
+- 异常关键字搜索为空：
+  - `task_wdt`
+  - `Guru Meditation`
+  - `backtrace`
+  - `panic`
+  - `abort`
+  - `skip destroy active screen`
+  - `SCREEN_UNLOADED`
+
+### 8.2 新踩坑与处理
+- 加入 WiFi/HTTPS/cJSON 后，默认单 App 分区 `0x100000` 装不下，构建报 `app partition is too small`。
+  - 处理：切换到工程已有 `partitions-16MiB.csv`，并把 `CONFIG_ESPTOOLPY_FLASHSIZE` 同步为 `16MB`。
+  - 验证：分区表显示 factory 为 `0x1f0000`，当前镜像剩余约 23%。
+- `idf.py monitor` 超时退出后，COM7 可能短时间被残留 Python/monitor 进程占用。
+  - 处理：先查杀残留 monitor/python，再用 pyserial 抓取 30 秒日志。
+- NVS 凭据保存时机必须在 `IP_EVENT_STA_GOT_IP` 后。
+  - 处理：不要在 `esp_wifi_connect()` 返回后立即保存密码；那只代表连接请求已发出，不代表密码有效。
+
+### 8.3 当前未完成实机闭环
+- 这次日志中保存的 `SAT-Guest` 自动连接失败，断开 reason=2，因此还没有出现：
+  - `BACKEND_WIFI: got ip <x.x.x.x>`
+  - `BACKEND_TIME: SNTP synced`
+  - `BACKEND_WEATHER: Open-Meteo updated`
+- 下一次需要在 WiFi 页面输入有效 SSID/密码后，再抓 COM7 日志确认 IP、SNTP、天气三段闭环。
+
 ### 本轮推进步骤
 1. Step 5：曾尝试激进组合，包含 PCLK 提升到 `30MHz`、buffer 提升、触摸周期降低。
    - 结果：点击设置页卡死。
@@ -343,3 +389,202 @@ cmd /c "call D:\esp32\Espressif\idf_cmd_init.bat esp-idf-9df0ad0b8292cf243ded566
 - 编译烧录与调试链路已有稳定 SOP。
 - UI显示不完整问题已有可复用布局规范。
 - 后续开发请优先复用本手册流程，可显著降低回归风险。
+
+## Backend V1 validation notes - 2026-04-27
+
+These notes record the WiFi/time/weather backend validation so future agents do not repeat the same detours.
+
+- Build command: use the ESP-IDF Python directly on this machine:
+  - `D:\ESP-IDF\Espressif\python_env\idf5.2_py3.11_env\Scripts\python.exe`
+  - `D:\ESP-IDF\Espressif\frameworks\esp-idf-v5.2.1\tools\idf.py`
+- Current successful build artifact:
+  - `build/18_touch.elf`
+  - `build/18_touch.bin`
+  - bin size after switching weather to HTTP provider: `0x16ffe0`
+  - factory partition size: `0x1f0000`
+  - free app partition space: `0x80020`
+- COM7 flash passed:
+  - `Hash of data verified`
+  - `Hard resetting via RTS pin`
+- Captive portal finding:
+  - Office WiFi `Stzn-office` can obtain IP `10.10.103.135`, but HTTP connectivity probes returned `302`.
+  - Treat this as "IP acquired, but public internet likely blocked by captive portal/auth page".
+  - Do not diagnose this as a WiFi password failure or stack problem.
+- Hotspot success path:
+  - User hotspot SSID: `zhangxiaohou`
+  - COM7 log: `BACKEND_WIFI: got ip 172.20.10.14`
+  - COM7 log: `BACKEND_NET: network internet probe open`
+  - COM7 log: `BACKEND_TIME: SNTP synced 16:36`
+  - COM7 log: `BACKEND_WEATHER: Open-Meteo updated`
+- NVS credential timing:
+  - Save credentials only after `IP_EVENT_STA_GOT_IP`.
+  - When switching from one connected AP to another, `esp_wifi_disconnect()` produces `WIFI_REASON_ASSOC_LEAVE`.
+  - During intentional reconnect, do not clear pending SSID/password on that reason; otherwise the new hotspot will connect once but not persist after reboot.
+  - Reboot persistence proof: `BACKEND_WIFI: connecting saved ssid zhangxiaohou`.
+- Weather provider note:
+  - HTTPS Open-Meteo validated the certificate on hotspot, but later timed out and was followed by `TG1WDT_SYS_RST`.
+  - Backend V1 now uses Open-Meteo HTTP behind `weather_service` to avoid TLS timeout/WDT risk while keeping the provider replaceable.
+  - If HTTPS is required later, test it as a separate task with longer watchdog diagnostics instead of mixing it with WiFi bring-up.
+- Latest passing logs:
+  - `tmp/backend_v1_hotspot_http_weather_com7.log`
+  - `tmp/backend_v1_hotspot_saved_reboot_com7.log`
+- Latest 60s reboot log had 0 error entries and no `task_wdt`, `Guru Meditation`, `backtrace`, `panic`, `abort`, `stack overflow`, or `SCREEN_UNLOADED`.
+
+## Backend V1 AMap weather and font coverage addendum - 2026-04-27
+
+This section supersedes the earlier Open-Meteo weather-provider note. Open-Meteo, wttr.in, and WAQI were temporary validation paths. The current Backend V1 weather source is AMap Weather WebService.
+
+### Current verified backend state
+- Active weather provider:
+  - AMap WebService `weatherInfo`
+  - fixed city/adcode: `310000` for Shanghai
+  - request mode: `extensions=base`, `output=JSON`
+  - API key is stored in code as a replaceable Backend V1 constant; do not print the key to serial logs or repeat the full key in docs.
+- Current UI mapping:
+  - `lives[0].city` -> city label, e.g. `上海市`
+  - `lives[0].weather` -> condition label, e.g. `阴`, `多云`
+  - `lives[0].temperature` -> `xx℃`
+  - `lives[0].humidity` -> `湿度 xx%`
+  - `lives[0].winddirection` + `lives[0].windpower` -> wind label
+  - `lives[0].reporttime` -> `HH:MM`
+  - AQI intentionally remains `AQI --` in Backend V1.
+- Current passing build after AMap + font autoscan:
+  - `build/18_touch.bin` size: `0x1916a0`
+  - factory partition: `0x1f0000`
+  - free app partition: `0x5e960` bytes, about 19%.
+- Current passing logs:
+  - `tmp/amap_weather_com7.log`
+  - `tmp/amap_weather_fontfix_com7.log`
+  - `tmp/amap_weather_font_autoscan_com7.log`
+- COM7 evidence:
+  - `BACKEND_WIFI: got ip 172.20.10.14`
+  - `BACKEND_TIME: SNTP synced 18:36`
+  - `BACKEND_WEATHER: AMap request start`
+  - `esp-x509-crt-bundle: Certificate validated`
+  - `BACKEND_WEATHER: AMap weather updated`
+  - `UI_BINDING: snapshot applied`
+- User final visual check:
+  - temperature displays normally
+  - humidity displays normally
+  - wind displays normally
+  - city/weather text displays normally
+  - WiFi disconnected/connection-info text displays normally
+
+### AMap weather pitfalls
+- AMap `windpower` can return `≤3`. The `≤` symbol was not in the generated LVGL font and caused wind display乱码.
+  - Current fix: normalize `≤` to ASCII `<=` inside `weather_service.c`.
+- AMap city can return `上海市`. Earlier font samples only included `上海`, so `市` caused the city/weather line to乱码.
+- AMap weather can return dynamic Chinese condition words not present in old samples, such as `阴`.
+- AQI is not provided by the selected AMap weather endpoint; Backend V1 intentionally shows `AQI --` instead of adding another API.
+
+### Font-generation rule for future work
+- Before referencing a Chinese string or dynamic provider-returned Chinese text, verify that the active generated font contains the needed glyphs.
+- Prefer batching all new strings, then regenerate all font sizes once.
+- Current generator is `tools/gen_ui_fonts.py`.
+- The generator now scans:
+  - `components/UI`
+  - `components/AppBackend`
+  - explicit weather/provider sample strings
+- After modifying UI/backend strings, run:
+```powershell
+& 'D:\ESP-IDF\Espressif\python_env\idf5.2_py3.11_env\Scripts\python.exe' 'tools\gen_ui_fonts.py'
+```
+- Quick glyph proof example:
+```powershell
+Select-String -Path 'components\UI\fonts\generated\ui_font_sc_12.c' -Pattern 'U\+5E02|U\+9634|U\+7B49|U\+5F85|U\+65E0'
+```
+- Known glyphs added during this round:
+  - `市`
+  - `阴`
+  - `无`
+  - `等`
+  - `待`
+  - weather words including `雨夹雪`, `冰雹`, `霾`, `浮尘`, `扬沙`, `沙尘暴`
+
+### LVGL/backend threading pitfall
+- Backend task, WiFi event callback, and HTTP code must not directly mutate LVGL objects.
+- A previous WiFi scan/connect freeze was traced to unsafe LVGL async/timer interaction from backend context.
+- Current safer pattern:
+  - backend updates `backend_store`
+  - backend notifies a pending UI refresh
+  - LVGL main loop calls the pending processor
+  - UI pages apply immutable snapshots in LVGL context
+- If clicking scan/connect freezes again, first inspect the UI binding path before blaming WiFi stack size or HTTP.
+
+### Network diagnosis pitfall
+- A WiFi that obtains IP can still be unusable for time/weather because of captive portal web authentication.
+- Treat these as separate states:
+  - WiFi connected with IP
+  - internet reachable
+  - SNTP synced
+  - weather provider reachable
+- Do not diagnose captive portal behavior as a wrong password, stack overflow, or ESP-IDF WiFi failure without probe/log evidence.
+
+### Recommended validation for backend changes
+1. Build with direct ESP-IDF Python + `idf.py`.
+2. Flash COM7 at `460800`.
+3. Capture COM7 at `115200`.
+4. Search for success markers:
+   - `APP_BACKEND: backend started`
+   - `BACKEND_WIFI: got ip`
+   - `BACKEND_TIME: SNTP synced`
+   - `BACKEND_WEATHER: AMap weather updated`
+   - `UI_BINDING: snapshot applied`
+5. Search for failure markers:
+   - `Guru Meditation`
+   - `task_wdt`
+   - `backtrace`
+   - `panic`
+   - `abort`
+   - `stack overflow`
+   - `SCREEN_UNLOADED`
+
+## Backend V1 WiFi state and Home status addendum - 2026-04-27
+
+This section records the WiFi state-machine fixes after AMap weather and font display were confirmed normal on device.
+
+### User-visible issues fixed
+- Home page showed `联网天气已同步` even after WiFi was disconnected.
+  - Root cause: Home UI used `snapshot->weather.valid` alone. Cached weather stayed valid after disconnect, so the subtitle still claimed an online sync.
+  - Fix: Home subtitle now says `联网天气已同步` only when `wifi_state == APP_BACKEND_WIFI_CONNECTED` and weather is valid. Offline state displays `WiFi 已断开`.
+- WiFi page appeared to stay in `扫描中` forever after disconnect and scan.
+  - Root cause 1: `backend_store_set_scan_results()` updated AP rows and message but did not set `wifi_state` out of `APP_BACKEND_WIFI_SCANNING`.
+  - Root cause 2: the same function used `xSemaphoreTake(s_mutex, 0)`. If UI binding was reading the snapshot at the same moment, the scan result update could be skipped silently even though COM7 still logged `scan done`.
+  - Fix: scan result commit now waits up to `200ms` for the store mutex and sets `wifi_state = APP_BACKEND_WIFI_IDLE`.
+
+### Verified evidence
+- Build passed:
+  - `build/18_touch.bin` size: `0x191800`
+  - factory partition: `0x1f0000`
+  - free app partition: `0x5e800` bytes, about 19%
+- COM7 flash passed with hash verification.
+- Runtime log:
+  - `tmp/wifi_scan_state_fix_com7.log`
+- COM7 evidence:
+  - `BACKEND_WIFI: scan start`
+  - `BACKEND_WIFI: scan done, ap_count=8`
+  - `BACKEND_WIFI: disconnect requested, forget_saved=1`
+  - `BACKEND_WIFI: disconnected by user`
+  - `BACKEND_WIFI: got ip 172.20.10.14`
+  - `BACKEND_WEATHER: AMap weather updated`
+  - `UI_BINDING: snapshot applied`
+- No `Guru Meditation`, `task_wdt`, `panic`, `abort`, `backtrace`, or `SCREEN_UNLOADED` was found in the latest verification log.
+- One `SNTP sync failed: ESP_ERR_TIMEOUT` warning appeared, but weather updated afterward. Treat it as a transient SNTP warning unless it repeats consistently.
+
+### New backend state-machine rules
+- `SCANNING` must be a short-lived operation state.
+- Any successful or failed scan path must leave `SCANNING`.
+- A COM7 `scan done` log is not enough proof that UI state changed; verify the snapshot store was actually updated and `UI_BINDING: snapshot applied` followed.
+- User-visible backend state commits should not use zero-time mutex waits if dropping the update would leave the UI stale.
+- Cached weather validity is not the same as live network connectivity. UI copy should distinguish:
+  - WiFi connected and weather valid: `联网天气已同步`
+  - WiFi disconnected: `WiFi 已断开`
+  - WiFi connected but weather pending/failing: show backend message or `等待联网同步`
+
+### Font note
+- The offline text uses `已`, `断`, and `开`.
+- These glyphs were checked in:
+  - `components/UI/fonts/generated/ui_font_sc_11.c`
+  - `components/UI/fonts/generated/ui_font_sc_12.c`
+  - `components/UI/fonts/generated/ui_font_sc_14.c`
+- No font regeneration was required for this fix.

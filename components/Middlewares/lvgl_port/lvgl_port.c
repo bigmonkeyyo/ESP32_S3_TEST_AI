@@ -7,13 +7,15 @@
 #include "esp_timer.h"
 #include "esp_lcd_panel_io.h"
 #include "lvgl.h"
+#include "app_backend.h"
 #include "lcd.h"
 #include "touch.h"
 #include "ui.h"
+#include "ui_data_bindings.h"
 
 #define LVGL_TICK_PERIOD_MS      1
 #define LVGL_TASK_PERIOD_MS      5
-#define LVGL_DRAW_BUF_LINES      120
+#define LVGL_DRAW_BUF_LINES      60
 #define LVGL_BACKLIGHT_FALLBACK_MS 1500
 
 static const char *TAG = "LVGL_PORT";
@@ -50,6 +52,13 @@ void lvgl_port_start(void)
         abort();
     }
 
+    err = app_backend_start();
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "AppBackend start failed: %s", esp_err_to_name(err));
+        abort();
+    }
+
     ESP_ERROR_CHECK(esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer, LVGL_TICK_PERIOD_MS * 1000));
     s_lvgl_start_us = esp_timer_get_time();
@@ -60,6 +69,7 @@ void lvgl_port_start(void)
     {
         const bool wait_too_long = ((esp_timer_get_time() - s_lvgl_start_us) >
                                     (LVGL_BACKLIGHT_FALLBACK_MS * 1000));
+        ui_data_bindings_process_pending();
         lv_timer_handler();
         if ((s_first_flush_done || wait_too_long) && !s_backlight_on)
         {
@@ -117,7 +127,8 @@ static void lvgl_port_indev_init(void)
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = lvgl_touch_read_cb;
-    indev_drv.scroll_limit = 3;
+    indev_drv.scroll_limit = 16;
+    indev_drv.scroll_throw = 100;
     lv_indev_drv_register(&indev_drv);
 }
 

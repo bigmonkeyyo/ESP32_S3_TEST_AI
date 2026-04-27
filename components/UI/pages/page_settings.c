@@ -3,11 +3,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "app_backend.h"
 #include "ui_fonts.h"
 #include "ui_page_manager.h"
 
 static lv_obj_t *s_screen = NULL;
 static lv_obj_t *s_location_label = NULL;
+static lv_obj_t *s_wifi_status_label = NULL;
 static bool s_nav_pending = false;
 
 static char s_location[32] = "上海 · 浦东新区";
@@ -124,6 +126,27 @@ static lv_obj_t *create_settings_row(
     }
 
     return row;
+}
+
+void page_settings_apply_snapshot(const app_backend_snapshot_t *snapshot)
+{
+    if ((s_screen == NULL) || (snapshot == NULL) || (s_wifi_status_label == NULL)) {
+        return;
+    }
+
+    if (snapshot->wifi_state == APP_BACKEND_WIFI_CONNECTED) {
+        lv_label_set_text(s_wifi_status_label, "已连接");
+        lv_obj_set_style_text_color(s_wifi_status_label, c_hex(0x2BC670), 0);
+    } else if (snapshot->wifi_state == APP_BACKEND_WIFI_CONNECTING) {
+        lv_label_set_text(s_wifi_status_label, "连接中");
+        lv_obj_set_style_text_color(s_wifi_status_label, c_hex(0x3D8BFF), 0);
+    } else if (snapshot->wifi_state == APP_BACKEND_WIFI_SCANNING) {
+        lv_label_set_text(s_wifi_status_label, "扫描中");
+        lv_obj_set_style_text_color(s_wifi_status_label, c_hex(0x3D8BFF), 0);
+    } else {
+        lv_label_set_text(s_wifi_status_label, "点击进入扫描");
+        lv_obj_set_style_text_color(s_wifi_status_label, c_hex(0x3D8BFF), 0);
+    }
 }
 
 static void page_settings_nav_async(void *user_data)
@@ -264,7 +287,7 @@ static lv_obj_t *page_settings_create(void)
     lv_obj_set_style_pad_all(scroll_content, 0, 0);
     lv_obj_clear_flag(scroll_content, LV_OBJ_FLAG_SCROLLABLE);
 
-    row = create_settings_row(scroll_content, 0, 0x3D8BFF, "WiFi连接", "点击进入扫描", 0x3D8BFF, NULL);
+    row = create_settings_row(scroll_content, 0, 0x3D8BFF, "WiFi连接", "点击进入扫描", 0x3D8BFF, &s_wifi_status_label);
     lv_obj_add_event_cb(row, page_settings_open_wifi_cb, LV_EVENT_CLICKED, NULL);
 
     row = create_settings_row(scroll_content, 50, 0xFF9F43, "使用地点", s_location, 0x1C2A3A, &s_location_label);
@@ -323,7 +346,18 @@ static void page_settings_on_destroy(void)
 {
     s_screen = NULL;
     s_location_label = NULL;
+    s_wifi_status_label = NULL;
     s_nav_pending = false;
+}
+
+static void page_settings_on_show(void *args)
+{
+    app_backend_snapshot_t snapshot = {0};
+    (void)args;
+
+    if (app_backend_get_snapshot(&snapshot) == ESP_OK) {
+        page_settings_apply_snapshot(&snapshot);
+    }
 }
 
 const ui_page_t g_page_settings = {
@@ -331,7 +365,7 @@ const ui_page_t g_page_settings = {
     .name = "SETTINGS",
     .cache_mode = UI_PAGE_CACHE_KEEP,
     .create = page_settings_create,
-    .on_show = NULL,
+    .on_show = page_settings_on_show,
     .on_hide = NULL,
     .on_destroy = page_settings_on_destroy,
 };

@@ -1,14 +1,19 @@
 ﻿#include "page_status.h"
 
 #include <stdbool.h>
+#include <stdio.h>
 
+#include "app_backend.h"
 #include "esp_log.h"
 #include "ui_fonts.h"
 #include "ui_page_manager.h"
 
 static lv_obj_t *s_screen = NULL;
+static lv_obj_t *s_wifi_label = NULL;
+static lv_obj_t *s_ip_label = NULL;
 static lv_obj_t *s_runtime_label = NULL;
 static lv_obj_t *s_sync_label = NULL;
+static lv_obj_t *s_online_label = NULL;
 static bool s_back_home_pending = false;
 
 static const char *TAG = "PAGE_STATUS";
@@ -98,6 +103,37 @@ static lv_obj_t *create_status_row(
     return row;
 }
 
+void page_status_apply_snapshot(const app_backend_snapshot_t *snapshot)
+{
+    char line[32] = {0};
+
+    if ((s_screen == NULL) || (snapshot == NULL)) {
+        return;
+    }
+
+    if (s_online_label != NULL) {
+        lv_label_set_text(s_online_label,
+                          snapshot->wifi_state == APP_BACKEND_WIFI_CONNECTED ? "在线" : "离线");
+    }
+    if (s_wifi_label != NULL) {
+        if (snapshot->wifi_state == APP_BACKEND_WIFI_CONNECTED) {
+            snprintf(line, sizeof(line), "%d dBm", (int)snapshot->rssi);
+        } else {
+            snprintf(line, sizeof(line), "--");
+        }
+        lv_label_set_text(s_wifi_label, line);
+    }
+    if (s_ip_label != NULL) {
+        lv_label_set_text(s_ip_label, snapshot->ip[0] != '\0' ? snapshot->ip : "--");
+    }
+    if (s_runtime_label != NULL) {
+        lv_label_set_text(s_runtime_label, snapshot->uptime[0] != '\0' ? snapshot->uptime : "00:00:00");
+    }
+    if (s_sync_label != NULL) {
+        lv_label_set_text(s_sync_label, snapshot->last_sync[0] != '\0' ? snapshot->last_sync : "--:--");
+    }
+}
+
 static void page_status_back_home_async(void *user_data)
 {
     (void)user_data;
@@ -132,12 +168,10 @@ static void page_status_refresh_cb(lv_event_t *e)
         return;
     }
 
-    if (s_runtime_label != NULL) {
-        lv_label_set_text(s_runtime_label, "03:27:52");
+    if (app_backend_weather_refresh_async() != ESP_OK) {
+        ESP_LOGW(TAG, "weather refresh enqueue failed");
     }
-    if (s_sync_label != NULL) {
-        lv_label_set_text(s_sync_label, "14:28:00");
-    }
+
 }
 
 static lv_obj_t *page_status_create(void)
@@ -190,10 +224,10 @@ static lv_obj_t *page_status_create(void)
     lv_obj_set_style_pad_bottom(tag, 4, 0);
     lv_obj_clear_flag(tag, LV_OBJ_FLAG_SCROLLABLE);
 
-    lbl = lv_label_create(tag);
-    lv_label_set_text(lbl, "在线");
-    set_label_font_color(lbl, &ui_font_sc_12, 0x17743D);
-    lv_obj_center(lbl);
+    s_online_label = lv_label_create(tag);
+    lv_label_set_text(s_online_label, "离线");
+    set_label_font_color(s_online_label, &ui_font_sc_12, 0x17743D);
+    lv_obj_center(s_online_label);
 
     scroll_view = lv_obj_create(s_screen);
     lv_obj_set_pos(scroll_view, 12, 50);
@@ -213,12 +247,12 @@ static lv_obj_t *page_status_create(void)
     lv_obj_clear_flag(scroll_content, LV_OBJ_FLAG_SCROLLABLE);
 
     create_status_row(scroll_content, 0, 0xFF9F43, "供电状态", "USB 5V / 0.42A", 0x1C2A3A, NULL);
-    create_status_row(scroll_content, 50, 0x2BC670, "WiFi信号", "-54 dBm", 0x2BC670, NULL);
-    create_status_row(scroll_content, 100, 0x3D8BFF, "IP地址", "192.168.1.43", 0x1C2A3A, NULL);
+    create_status_row(scroll_content, 50, 0x2BC670, "WiFi信号", "--", 0x2BC670, &s_wifi_label);
+    create_status_row(scroll_content, 100, 0x3D8BFF, "IP地址", "--", 0x1C2A3A, &s_ip_label);
     create_status_row(scroll_content, 150, 0xFF9F43, "固件版本", "v1.2.7", 0x1C2A3A, NULL);
-    create_status_row(scroll_content, 200, 0x2BC670, "运行时长", "03:27:51", 0x1C2A3A, &s_runtime_label);
+    create_status_row(scroll_content, 200, 0x2BC670, "运行时长", "00:00:00", 0x1C2A3A, &s_runtime_label);
     create_status_row(scroll_content, 250, 0x3D8BFF, "内存占用", "63%", 0x5F738C, NULL);
-    create_status_row(scroll_content, 300, 0x3D8BFF, "上次同步", "14:20:33", 0x5F738C, &s_sync_label);
+    create_status_row(scroll_content, 300, 0x3D8BFF, "上次同步", "--:--", 0x5F738C, &s_sync_label);
 
     scroll_track = lv_obj_create(s_screen);
     lv_obj_set_pos(scroll_track, 305, 62);
@@ -257,9 +291,22 @@ static lv_obj_t *page_status_create(void)
 static void page_status_on_destroy(void)
 {
     s_screen = NULL;
+    s_wifi_label = NULL;
+    s_ip_label = NULL;
     s_runtime_label = NULL;
     s_sync_label = NULL;
+    s_online_label = NULL;
     s_back_home_pending = false;
+}
+
+static void page_status_on_show(void *args)
+{
+    app_backend_snapshot_t snapshot = {0};
+    (void)args;
+
+    if (app_backend_get_snapshot(&snapshot) == ESP_OK) {
+        page_status_apply_snapshot(&snapshot);
+    }
 }
 
 const ui_page_t g_page_status = {
@@ -267,7 +314,7 @@ const ui_page_t g_page_status = {
     .name = "STATUS",
     .cache_mode = UI_PAGE_CACHE_NONE,
     .create = page_status_create,
-    .on_show = NULL,
+    .on_show = page_status_on_show,
     .on_hide = NULL,
     .on_destroy = page_status_on_destroy,
 };

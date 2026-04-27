@@ -1,6 +1,7 @@
 ﻿idf_component_register(
     SRCS
         "core/ui.c"
+        "core/ui_data_bindings.c"
         "core/ui_page_anim.c"
         "core/ui_page_manager.c"
         "core/ui_page_registry.c"
@@ -20,5 +21,5 @@
     INCLUDE_DIRS
         "include"
         "pages"
-    REQUIRES lvgl
+    REQUIRES lvgl AppBackend
 )

@@ -7,6 +7,10 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "components" / "UI" / "fonts" / "generated"
+SCAN_DIRS = [
+    ROOT / "components" / "UI",
+    ROOT / "components" / "AppBackend",
+]
 
 FONT_REGULAR = pathlib.Path("C:/Windows/Fonts/Deng.ttf")
 FONT_BOLD = pathlib.Path("C:/Windows/Fonts/Dengb.ttf")
@@ -22,8 +26,9 @@ FONT_BY_SIZE = {
 
 TEXT_SAMPLES = [
     "14:28 26°C 26℃ 体感28°C 体感28℃",
-    "上海 · 多云",
+    "上海 上海市 · 多云",
     "当前天气 多云转晴 湿度 东南风 级 AQI 良",
+    "等待联网同步 联网天气已同步",
     "进入设置 设备状态",
     "支持天气、定位、设备信息联动展示",
     "← 返回 设置 可滚动",
@@ -35,15 +40,39 @@ TEXT_SAMPLES = [
     "扫描结果 连接信息 连接WiFi 取消",
     "连接失败：密码错误，请重新输入",
     "连接失败：请输入密码 连接成功：WiFi 已连接",
+    "已连接 连接中 扫描中 断开WiFi 切换WiFi 正在断开 WiFi 正在切换 WiFi",
+    "断开请求失败，请重试 WiFi 已断开 网络可能需要网页登录认证 未同步",
+    "天气同步完成 天气同步失败",
+    "晴 阴 少云 多云 雾 小雨 中雨 大雨 暴雨 雪 阵雨 雷雨 雨夹雪 冰雹 霾",
+    "雷阵雨 小雪 中雪 大雪 暴雪 冻雨 特大暴雨",
+    "浮尘 扬沙 沙尘暴 强沙尘暴",
+    "北风 东北风 东风 东南风 南风 西南风 西风 西北风 无风向 风力",
+    "AQI 0 20 40 60 80 100 优 良 中 差 很差 极差",
     "强 中 弱",
     "Office_2.4G Office_5G Guest_WiFi",
     "、·：%",
 ]
 
 
+def iter_source_files():
+    for base in SCAN_DIRS:
+        if not base.exists():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file():
+                continue
+            if "fonts/generated" in path.as_posix().replace("\\", "/"):
+                continue
+            if path.suffix.lower() in {".c", ".h", ".py"}:
+                yield path
+
+
 def build_symbols() -> str:
     symbols = set()
     for text in TEXT_SAMPLES:
+        symbols.update(text)
+    for path in iter_source_files():
+        text = path.read_text(encoding="utf-8", errors="ignore")
         symbols.update(text)
     symbols = {ch for ch in symbols if ord(ch) > 0x7E}
     return "".join(sorted(symbols))

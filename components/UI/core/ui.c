@@ -3,6 +3,7 @@
 #include <stdbool.h>
 
 #include "esp_log.h"
+#include "ui_data_bindings.h"
 #include "ui_page_registry.h"
 #include "ui_page_stack.h"
 
@@ -34,6 +35,12 @@ esp_err_t ui_init(void)
     err = ui_page_push(root->id, NULL, UI_ANIM_NONE);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "initial root push failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = ui_data_bindings_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "ui_data_bindings_init failed: %s", esp_err_to_name(err));
         return err;
     }
 

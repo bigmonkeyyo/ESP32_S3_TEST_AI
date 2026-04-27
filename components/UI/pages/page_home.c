@@ -1,11 +1,19 @@
 ﻿#include "page_home.h"
 
+#include <stdio.h>
+
+#include "app_backend.h"
 #include "ui_fonts.h"
 #include "ui_page_manager.h"
 
 static lv_obj_t *s_screen = NULL;
+static lv_obj_t *s_time_label = NULL;
 static lv_obj_t *s_city_weather = NULL;
 static lv_obj_t *s_temp_sub = NULL;
+static lv_obj_t *s_weather_main = NULL;
+static lv_obj_t *s_humidity_label = NULL;
+static lv_obj_t *s_wind_label = NULL;
+static lv_obj_t *s_aqi_label = NULL;
 
 static lv_color_t c_hex(uint32_t rgb)
 {
@@ -50,7 +58,8 @@ static lv_obj_t *create_round_button(
     return btn;
 }
 
-static lv_obj_t *create_pill(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, uint32_t bg, uint32_t fg, const char *text)
+static lv_obj_t *create_pill(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, uint32_t bg, uint32_t fg,
+                             const char *text, lv_obj_t **label_out)
 {
     lv_obj_t *pill = lv_obj_create(parent);
     lv_obj_t *lbl = lv_label_create(pill);
@@ -69,8 +78,65 @@ static lv_obj_t *create_pill(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, uint3
     lv_label_set_text(lbl, text);
     set_label_font_color(lbl, &ui_font_sc_11, fg);
     lv_obj_center(lbl);
+    if (label_out != NULL) {
+        *label_out = lbl;
+    }
 
     return pill;
+}
+
+void page_home_apply_snapshot(const app_backend_snapshot_t *snapshot)
+{
+    char line[64] = {0};
+
+    if ((s_screen == NULL) || (snapshot == NULL)) {
+        return;
+    }
+
+    if (s_time_label != NULL) {
+        lv_label_set_text(s_time_label, snapshot->now_time[0] != '\0' ? snapshot->now_time : "--:--");
+    }
+
+    if (s_city_weather != NULL) {
+        snprintf(line, sizeof(line), "%s · %s",
+                 snapshot->weather.city[0] != '\0' ? snapshot->weather.city : "上海",
+                 snapshot->weather.condition[0] != '\0' ? snapshot->weather.condition : "--");
+        lv_label_set_text(s_city_weather, line);
+    }
+
+    if (s_temp_sub != NULL) {
+        if ((snapshot->wifi_state == APP_BACKEND_WIFI_CONNECTED) && snapshot->weather.valid) {
+            lv_label_set_text(s_temp_sub, "联网天气已同步");
+        } else if ((snapshot->wifi_state == APP_BACKEND_WIFI_CONNECTED) ||
+                   (snapshot->wifi_state == APP_BACKEND_WIFI_CONNECTING) ||
+                   (snapshot->wifi_state == APP_BACKEND_WIFI_SCANNING)) {
+            lv_label_set_text(s_temp_sub, snapshot->message[0] != '\0' ? snapshot->message : "等待联网同步");
+        } else if (snapshot->wifi_state == APP_BACKEND_WIFI_FAILED) {
+            lv_label_set_text(s_temp_sub, snapshot->message[0] != '\0' ? snapshot->message : "WiFi 已断开");
+        } else {
+            lv_label_set_text(s_temp_sub, "WiFi 已断开");
+        }
+    }
+
+    if (s_weather_main != NULL) {
+        snprintf(line, sizeof(line), "%s  %s",
+                 snapshot->weather.condition[0] != '\0' ? snapshot->weather.condition : "--",
+                 snapshot->weather.temperature[0] != '\0' ? snapshot->weather.temperature : "--");
+        lv_label_set_text(s_weather_main, line);
+    }
+
+    if (s_humidity_label != NULL) {
+        lv_label_set_text(s_humidity_label,
+                          snapshot->weather.humidity[0] != '\0' ? snapshot->weather.humidity : "湿度 --");
+    }
+    if (s_wind_label != NULL) {
+        lv_label_set_text(s_wind_label,
+                          snapshot->weather.wind[0] != '\0' ? snapshot->weather.wind : "风 --");
+    }
+    if (s_aqi_label != NULL) {
+        lv_label_set_text(s_aqi_label,
+                          snapshot->weather.aqi[0] != '\0' ? snapshot->weather.aqi : "AQI --");
+    }
 }
 
 static void page_home_open_settings_cb(lv_event_t *e)
@@ -120,10 +186,10 @@ static lv_obj_t *page_home_create(void)
     lv_obj_set_style_pad_all(header, 0, 0);
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
-    lbl = lv_label_create(header);
-    lv_label_set_text(lbl, "14:28");
-    set_label_font_color(lbl, &ui_font_sc_30, 0x18314F);
-    lv_obj_set_pos(lbl, 0, 0);
+    s_time_label = lv_label_create(header);
+    lv_label_set_text(s_time_label, "--:--");
+    set_label_font_color(s_time_label, &ui_font_sc_30, 0x18314F);
+    lv_obj_set_pos(s_time_label, 0, 0);
 
     s_city_weather = lv_label_create(header);
     lv_obj_set_width(s_city_weather, 180);
@@ -134,6 +200,7 @@ static lv_obj_t *page_home_create(void)
     s_temp_sub = lv_label_create(header);
     lv_obj_set_width(s_temp_sub, 180);
     lv_obj_set_style_text_align(s_temp_sub, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_label_set_long_mode(s_temp_sub, LV_LABEL_LONG_CLIP);
     set_label_font_color(s_temp_sub, &ui_font_sc_11, 0x5F738C);
     lv_obj_align(s_temp_sub, LV_ALIGN_TOP_RIGHT, -6, 27);
 
@@ -154,14 +221,14 @@ static lv_obj_t *page_home_create(void)
     set_label_font_color(lbl, &ui_font_sc_12, 0x476C95);
     lv_obj_set_pos(lbl, 12, 12);
 
-    lbl = lv_label_create(weather);
-    lv_label_set_text(lbl, "多云转晴  26°C");
-    set_label_font_color(lbl, &ui_font_sc_24, 0x1A3D64);
-    lv_obj_set_pos(lbl, 12, 34);
+    s_weather_main = lv_label_create(weather);
+    lv_label_set_text(s_weather_main, "--  --");
+    set_label_font_color(s_weather_main, &ui_font_sc_24, 0x1A3D64);
+    lv_obj_set_pos(s_weather_main, 12, 34);
 
-    create_pill(weather, 12, 77, 0x66C7FF, 0x083B63, "湿度 68%");
-    create_pill(weather, 86, 77, 0xFFD27A, 0x6A3C00, "东南风 2级");
-    create_pill(weather, 174, 77, 0x8FE3A9, 0x114D24, "AQI 良");
+    create_pill(weather, 12, 77, 0x66C7FF, 0x083B63, "湿度 --", &s_humidity_label);
+    create_pill(weather, 86, 77, 0xFFD27A, 0x6A3C00, "风 --", &s_wind_label);
+    create_pill(weather, 174, 77, 0x8FE3A9, 0x114D24, "AQI --", &s_aqi_label);
 
     btn_area = lv_obj_create(s_screen);
     lv_obj_set_pos(btn_area, 12, 172);
@@ -177,8 +244,8 @@ static lv_obj_t *page_home_create(void)
     btn = create_round_button(btn_area, 152, 0, 144, 40, 0x7C83FF, "设备状态", &ui_font_sc_13);
     lv_obj_add_event_cb(btn, page_home_open_status_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_label_set_text(s_city_weather, "上海 · 多云");
-    lv_label_set_text(s_temp_sub, "26℃  体感28℃");
+    lv_label_set_text(s_city_weather, "上海 · --");
+    lv_label_set_text(s_temp_sub, "等待联网同步");
 
     return s_screen;
 }
@@ -186,8 +253,23 @@ static lv_obj_t *page_home_create(void)
 static void page_home_on_destroy(void)
 {
     s_screen = NULL;
+    s_time_label = NULL;
     s_city_weather = NULL;
     s_temp_sub = NULL;
+    s_weather_main = NULL;
+    s_humidity_label = NULL;
+    s_wind_label = NULL;
+    s_aqi_label = NULL;
+}
+
+static void page_home_on_show(void *args)
+{
+    app_backend_snapshot_t snapshot = {0};
+    (void)args;
+
+    if (app_backend_get_snapshot(&snapshot) == ESP_OK) {
+        page_home_apply_snapshot(&snapshot);
+    }
 }
 
 const ui_page_t g_page_home = {
@@ -195,7 +277,7 @@ const ui_page_t g_page_home = {
     .name = "HOME",
     .cache_mode = UI_PAGE_CACHE_KEEP,
     .create = page_home_create,
-    .on_show = NULL,
+    .on_show = page_home_on_show,
     .on_hide = NULL,
     .on_destroy = page_home_on_destroy,
 };
