@@ -421,7 +421,124 @@ skip destroy active screen
 4. 前端页面显示真实 WiFi、时间、天气数据。
 5. 固定页面切换路径无卡死、无看门狗、无崩溃。
 
-## 11. 后续扩展
+## 11. 后端开发规范与限制
+
+开发规范：
+
+1. 后端代码统一放在 `components/AppBackend/`，不得把 ESP-IDF WiFi、HTTP、SNTP 细节直接写入页面文件。
+2. UI 页面只负责发起动作、读取快照、渲染状态，不持有后端内部任务句柄。
+3. 后端状态必须先写入 `backend_store`，再通知 UI 刷新。
+4. 后端通知 UI 时必须走 LVGL 安全上下文，例如 `lv_async_call` 或统一 UI binding 调度，不得从 WiFi/HTTP/事件回调线程直接操作 LVGL 对象。
+5. 所有外部输入字符串必须限制长度，SSID、密码、HTTP 响应、错误消息都要按固定 buffer 边界处理。
+6. 所有网络动作都必须是异步请求，页面事件回调里不能阻塞等待扫描、连接、HTTP 或 SNTP。
+7. 每个后端阶段必须有串口日志，日志 TAG 固定为 `APP_BACKEND`、`BACKEND_WIFI`、`BACKEND_TIME`、`BACKEND_WEATHER`、`UI_BINDING`。
+8. 第一版优先完成闭环，不做复杂抽象；但天气源必须通过 `weather_service` 封装，后续可替换 provider。
+9. 新增或修改 `sdkconfig` 前必须先说明原因；普通后端开发优先避免改 UI 性能参数。
+10. 实现过程中形成的新经验、失败日志、回退原因，可以追加到 `LVGL_UI_编译烧录调试与避坑经验.md` 的后端小节。
+
+限制：
+
+1. 不修改 LVGL 页面跳转生命周期核心逻辑，除非验证证明后端接入必须改。
+2. 不回退当前已验证的 UI 性能参数：显示刷新、触摸读取、PCLK、draw buffer、scroll limit。
+3. 不把 Open-Meteo URL 散落在页面代码中。
+4. 不在 UI 回调里执行 `esp_wifi_scan_start`、`esp_wifi_connect`、`esp_http_client_perform`、SNTP 等耗时调用。
+5. 不在 WiFi 事件回调里做 HTTP 请求；事件回调只投递后端工作消息。
+6. 不在第一版引入 SoftAP 配网、MQTT、OTA、定位、多城市等扩展功能。
+7. 不因为天气失败影响 WiFi 连接状态显示；状态必须分层呈现。
+8. 不使用明文日志打印 WiFi 密码。
+9. 不在没有实机串口证据时声称功能已通过。
+
+## 12. 子代理使用约束
+
+如果开发过程中需要使用子代理，必须满足以下规则：
+
+1. 至少分出一个实现子代理和一个验证子代理。
+2. 实现子代理只负责明确文件范围内的代码修改，不得回退其他人已有改动。
+3. 验证子代理必须独立做测试或审查，不能只复述实现结果。
+4. 若功能涉及实机行为，验证必须包含构建、烧录、COM7 串口日志或明确说明无法实机验证的原因。
+5. 若功能暂时无法上板验证，必须提供可编译的测试入口或后端自测代码，并在串口输出可判断的结果。
+6. 代码审核子代理重点检查线程上下文、buffer 边界、错误路径、NVS 凭据处理、页面生命周期风险。
+7. 主代理最终负责整合结论，不能把子代理输出原样当成验收结果。
+
+## 13. 后端 V1 计划进度表
+
+状态枚举：
+
+- `未开始`
+- `进行中`
+- `已编码`
+- `已编译`
+- `已烧录`
+- `串口通过`
+- `需返工`
+
+| 阶段 | 目标 | 主要文件 | 验证方式 | 当前状态 | 记录 |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 设计文档确认 | `docs/superpowers/specs/2026-04-27-wifi-time-weather-backend-design.md` | 用户审阅 | 进行中 | 已补充开发规范、子代理约束、进度表 |
+| 1 | 详细实施计划 | `docs/superpowers/plans/` | 用户审阅 | 未开始 | 等设计确认后创建 |
+| 2 | AppBackend 组件骨架 | `components/AppBackend/CMakeLists.txt`、`app_backend.*` | `idf.py build` | 未开始 | 建立组件与启动入口 |
+| 3 | 后端状态仓库 | `backend_store.*`、`app_backend_types.h` | 单元/自测日志 | 未开始 | 快照读写和边界保护 |
+| 4 | UI 数据绑定层 | `ui_data_bindings.*`、页面 apply 接口 | 编译 + 页面默认显示 | 未开始 | 后端不直接操作页面对象 |
+| 5 | WiFi 初始化与扫描 | `wifi_service.*`、`page_wifi.c` | COM7 输出 AP 列表数量 | 未开始 | 替换假 AP 列表 |
+| 6 | WiFi 连接与 IP 获取 | `wifi_service.*`、NVS 凭据 | COM7 输出 got ip | 未开始 | 不打印密码 |
+| 7 | SNTP 时间同步 | `time_service.*` | COM7 输出同步时间 | 未开始 | Home/Status 显示真实时间 |
+| 8 | Open-Meteo 天气请求 | `weather_service.*` | HTTP 日志 + JSON 解析日志 | 未开始 | 固定上海坐标 |
+| 9 | Home/Status 前端落地 | `page_home.c`、`page_status.c` | 页面显示真实数据 | 未开始 | 未联网占位要可用 |
+| 10 | 整体回归 | 全部相关文件 | 编译、烧录、COM7、固定页面路径 | 未开始 | 搜索异常关键字 |
+| 11 | 经验沉淀 | `LVGL_UI_编译烧录调试与避坑经验.md` | 文档审查 | 未开始 | 记录踩坑、日志、回退原因 |
+
+## 14. COM7 实机测试要求
+
+测试优先级：
+
+1. 构建测试：确认 `build/18_touch.elf` 和 `build/18_touch.bin` 生成。
+2. 烧录测试：COM7 或用户指定端口出现 `Hash of data verified` 和 `Hard resetting via RTS pin`。
+3. 启动测试：串口出现 `APP_BACKEND: backend started`。
+4. WiFi 扫描测试：串口输出 `BACKEND_WIFI: scan done, ap_count=N`。
+5. WiFi 连接测试：串口输出 `BACKEND_WIFI: got ip <ip>`。
+6. 时间测试：串口输出 `BACKEND_TIME: SNTP synced <time>`。
+7. 天气测试：串口输出 `BACKEND_WEATHER: Open-Meteo updated`。
+8. UI 绑定测试：串口输出 `UI_BINDING: snapshot applied`，并通过实机页面显示确认。
+9. 回归路径测试：重复执行 `首页 -> 设置 -> WiFi -> 返回设置 -> 设备状态 -> 返回首页`。
+
+测试代码要求：
+
+1. 如某阶段还不能完全接 UI，允许先写后端自测入口。
+2. 自测入口必须通过串口打印明确 PASS/FAIL。
+3. 测试日志必须包含阶段名、错误码、关键状态值。
+4. 测试结束后不能留下影响正式 UI 的阻塞循环或临时调试页面。
+
+异常关键字：
+
+```text
+task_wdt
+Guru Meditation
+backtrace
+panic
+abort
+skip destroy active screen
+SCREEN_UNLOADED
+```
+
+一旦出现上述关键字，停止继续堆功能，先定位并记录到避坑文档。
+
+## 15. 开发经验记录规则
+
+开发过程中必须记录：
+
+1. 每次失败的现象、日志文件路径、怀疑原因、最终原因。
+2. 每次回退的改动点和回退后验证结果。
+3. 每次实机确认通过的固定路径和关键日志。
+4. 与 UI 生命周期、LVGL 线程上下文、COM7 串口、ESP-IDF 工具链有关的新坑。
+5. 天气 API 返回格式变化、TLS/证书、DNS、HTTP 状态码等联网问题。
+
+记录位置：
+
+1. 阶段进度优先更新本设计文档的“后端 V1 计划进度表”，直到实现计划文档创建。
+2. 长期可复用经验追加到 `LVGL_UI_编译烧录调试与避坑经验.md`。
+3. 详细实施步骤创建后，进度表可同步迁移或复制到 `docs/superpowers/plans/` 对应计划文档。
+
+## 16. 后续扩展
 
 第二版可扩展：
 
