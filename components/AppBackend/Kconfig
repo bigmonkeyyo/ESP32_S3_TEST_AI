@@ -1,0 +1,99 @@
+menu "AppBackend"
+
+    menu "OneNET MQTT"
+
+        config APP_ONENET_MQTT_ENABLE
+            bool "Enable OneNET MQTT client"
+            default n
+            help
+                Enable the OneNET MQTT client after WiFi gets an IP address.
+                Keep this disabled until product credentials are configured.
+
+        config APP_ONENET_MQTT_URI
+            string "OneNET MQTT URI"
+            default "mqtt://183.230.40.96:1883"
+            depends on APP_ONENET_MQTT_ENABLE
+
+        config APP_ONENET_PRODUCT_ID
+            string "OneNET product ID"
+            default "592ks3TWbW"
+            depends on APP_ONENET_MQTT_ENABLE
+
+        config APP_ONENET_DEVICE_NAME
+            string "OneNET device name"
+            default "ESP32S3-AIroot-001"
+            depends on APP_ONENET_MQTT_ENABLE
+
+        config APP_ONENET_DEVICE_KEY
+            string "OneNET device key"
+            default ""
+            depends on APP_ONENET_MQTT_ENABLE
+            help
+                Device secret from OneNET. Do not commit a real key to Git.
+                This value is used only to generate the MQTT password token.
+
+        config APP_ONENET_TOKEN_EXPIRE_UNIX
+            string "OneNET token expiration Unix timestamp"
+            default "1893456000"
+            depends on APP_ONENET_MQTT_ENABLE
+            help
+                Expiration timestamp used in the OneNET token. Default is
+                2030-01-01 00:00:00 UTC.
+
+    endmenu
+
+    menu "OneNET OTA"
+
+        config APP_ONENET_OTA_ENABLE
+            bool "Enable OneNET OTA service"
+            default y
+            help
+                Enable OneNET OTA version reporting and update task checking
+                after WiFi gets an IP address.
+
+        config APP_ONENET_OTA_BASE_URL
+            string "OneNET OTA base URL"
+            default "https://iot-api.heclouds.com/fuse-ota"
+            depends on APP_ONENET_OTA_ENABLE
+
+        config APP_ONENET_OTA_PRODUCT_ACCESS_KEY
+            string "OneNET product access key"
+            default ""
+            depends on APP_ONENET_OTA_ENABLE
+            help
+                Product-level access key used by OneNET OTA HTTP APIs.
+                This is different from the device-level MQTT key.
+
+        config APP_ONENET_OTA_DEV_ID
+            string "OneNET platform device ID"
+            default ""
+            depends on APP_ONENET_OTA_ENABLE
+            help
+                Numeric platform device ID required by OneNET OTA APIs.
+
+        config APP_ONENET_OTA_TOKEN_EXPIRE_UNIX
+            string "OneNET OTA token expiration Unix timestamp"
+            default "1893456000"
+            depends on APP_ONENET_OTA_ENABLE
+
+        config APP_ONENET_OTA_MANUF
+            string "OneNET OTA manufacturer"
+            default "101"
+            depends on APP_ONENET_OTA_ENABLE
+
+        config APP_ONENET_OTA_MODEL
+            string "OneNET OTA model"
+            default "10101"
+            depends on APP_ONENET_OTA_ENABLE
+
+        config APP_ONENET_OTA_TYPE
+            int "OneNET OTA type"
+            default 2
+            range 1 2
+            depends on APP_ONENET_OTA_ENABLE
+            help
+                1 means FOTA, 2 means SOTA.
+
+    endmenu
+
+endmenu

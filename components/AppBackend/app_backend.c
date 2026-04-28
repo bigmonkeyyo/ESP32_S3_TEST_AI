@@ -11,6 +11,8 @@
 
 #include "app_backend_internal.h"
 #include "backend_store.h"
+#include "mqtt_service.h"
+#include "ota_service.h"
 #include "time_service.h"
 #include "weather_service.h"
 #include "wifi_service.h"
@@ -88,6 +90,8 @@ static void app_backend_handle_ip_ready(void)
     vTaskDelay(pdMS_TO_TICKS(APP_BACKEND_IP_READY_SETTLE_MS));
     time_service_format_uptime(uptime, sizeof(uptime));
 
+    (void)mqtt_service_start();
+
     if (time_service_sync(now_time, sizeof(now_time), last_sync, sizeof(last_sync)) == ESP_OK) {
         backend_store_set_time(now_time, uptime, last_sync);
         app_backend_notify_changed();
@@ -98,6 +102,7 @@ static void app_backend_handle_ip_ready(void)
     }
 
     app_backend_refresh_weather_with_diag();
+    (void)ota_service_start();
 }
 
 static void app_backend_task(void *arg)
@@ -125,6 +130,9 @@ static void app_backend_task(void *arg)
                 break;
             case APP_BACKEND_CMD_IP_READY:
                 app_backend_handle_ip_ready();
+                break;
+            case APP_BACKEND_CMD_OTA_CONFIRM:
+                (void)ota_service_confirm_update();
                 break;
             default:
                 ESP_LOGW(TAG, "unknown cmd=%d", (int)cmd.id);
@@ -252,6 +260,11 @@ esp_err_t app_backend_wifi_disconnect_async(bool forget_saved)
 esp_err_t app_backend_weather_refresh_async(void)
 {
     return app_backend_post_simple(APP_BACKEND_CMD_WEATHER_REFRESH);
+}
+
+esp_err_t app_backend_ota_confirm_async(void)
+{
+    return app_backend_post_simple(APP_BACKEND_CMD_OTA_CONFIRM);
 }
 
 esp_err_t app_backend_get_snapshot(app_backend_snapshot_t *out)

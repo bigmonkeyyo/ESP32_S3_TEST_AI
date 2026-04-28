@@ -15,6 +15,8 @@
 #define APP_BACKEND_WEATHER_VALUE_LEN    16
 #define APP_BACKEND_WEATHER_WIND_LEN     24
 #define APP_BACKEND_MESSAGE_MAX_LEN      64
+#define APP_BACKEND_OTA_VERSION_LEN      24
+#define APP_BACKEND_OTA_MESSAGE_LEN      72
 
 typedef enum {
     APP_BACKEND_WIFI_IDLE = 0,
@@ -43,6 +45,24 @@ typedef struct {
     bool valid;
 } app_backend_weather_t;
 
+typedef enum {
+    APP_BACKEND_OTA_IDLE = 0,
+    APP_BACKEND_OTA_CHECKING,
+    APP_BACKEND_OTA_READY,
+    APP_BACKEND_OTA_DOWNLOADING,
+    APP_BACKEND_OTA_APPLYING,
+    APP_BACKEND_OTA_DONE,
+    APP_BACKEND_OTA_FAILED,
+} app_backend_ota_state_t;
+
+typedef struct {
+    app_backend_ota_state_t state;
+    char current_version[APP_BACKEND_OTA_VERSION_LEN];
+    char target_version[APP_BACKEND_OTA_VERSION_LEN];
+    int progress;
+    char message[APP_BACKEND_OTA_MESSAGE_LEN];
+} app_backend_ota_t;
+
 typedef struct {
     app_backend_wifi_state_t wifi_state;
     app_backend_wifi_ap_t aps[APP_BACKEND_MAX_APS];
@@ -54,5 +74,6 @@ typedef struct {
     char uptime[APP_BACKEND_UPTIME_MAX_LEN];
     char last_sync[APP_BACKEND_TIME_MAX_LEN];
     app_backend_weather_t weather;
+    app_backend_ota_t ota;
     char message[APP_BACKEND_MESSAGE_MAX_LEN];
 } app_backend_snapshot_t;

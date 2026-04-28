@@ -548,3 +548,29 @@ SCREEN_UNLOADED
 4. 使用 `esp_app_get_description()` 显示真实固件版本。
 5. 增加网络状态图标或更细的错误码显示。
 6. 增加天气定时刷新，例如每 15 分钟刷新一次。
+
+## 17. OneNET OTA 扩展完成记录 - 2026-04-28
+
+虽然本设计文档的 Backend V1 初始限制是不在第一版引入 MQTT/OTA，但后续已经在同一 AppBackend 架构上完成 OneNET MQTT/OTA 扩展，并由用户实机确认可用。
+
+完成内容：
+
+1. `components/AppBackend/mqtt_service.c`：接入 OneNET MQTT，设备上线后发布固件状态，并回复属性设置和 OTA inform。
+2. `components/AppBackend/ota_service.c`：接入 OneNET `fuse-ota` HTTPS API，完成版本上报、任务检查、升级包下载、MD5 校验、OTA 分区写入和启动分区切换。
+3. `components/UI/core/ui_data_bindings.c`：检测 `APP_BACKEND_OTA_READY` 后弹出“固件升级”确认框，用户点击“更新”后才开始下载。
+4. `components/UI/pages/page_status.c`：固件版本显示已从硬编码改为后端真实版本。
+5. `partitions-16MiB.csv`：已改为 `otadata + ota_0 + ota_1` 标准 OTA 启动结构，每个 OTA 分区 4MB。
+
+验证结论：
+
+- OTA 从 `1.2.7` 到 `1.2.8` 已通过 OneNET 实机闭环。
+- 设备重启后串口显示 `App version: 1.2.8`，并从 `ota_1` 分区启动。
+- UI 旧版本显示问题不是 OTA 失败，而是状态页写死 `v1.2.7`，现已修复并构建为 `1.2.9`。
+
+长期经验已沉淀到：
+
+```text
+ESP32+ONENET+OTA开发经验.md
+LVGL_UI_编译烧录调试与避坑经验.md
+docs/superpowers/plans/2026-04-27-wifi-time-weather-backend-v1.md
+```

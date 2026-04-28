@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "app_backend.h"
 #include "esp_log.h"
@@ -11,6 +12,7 @@
 static lv_obj_t *s_screen = NULL;
 static lv_obj_t *s_wifi_label = NULL;
 static lv_obj_t *s_ip_label = NULL;
+static lv_obj_t *s_version_label = NULL;
 static lv_obj_t *s_runtime_label = NULL;
 static lv_obj_t *s_sync_label = NULL;
 static lv_obj_t *s_online_label = NULL;
@@ -103,6 +105,27 @@ static lv_obj_t *create_status_row(
     return row;
 }
 
+static void set_version_label_text(const char *version)
+{
+    char line[32] = {0};
+
+    if (s_version_label == NULL) {
+        return;
+    }
+
+    if ((version == NULL) || (version[0] == '\0') || (strcmp(version, "--") == 0)) {
+        lv_label_set_text(s_version_label, "--");
+        return;
+    }
+
+    if (version[0] == 'v' || version[0] == 'V') {
+        snprintf(line, sizeof(line), "%s", version);
+    } else {
+        snprintf(line, sizeof(line), "v%s", version);
+    }
+    lv_label_set_text(s_version_label, line);
+}
+
 void page_status_apply_snapshot(const app_backend_snapshot_t *snapshot)
 {
     char line[32] = {0};
@@ -126,6 +149,7 @@ void page_status_apply_snapshot(const app_backend_snapshot_t *snapshot)
     if (s_ip_label != NULL) {
         lv_label_set_text(s_ip_label, snapshot->ip[0] != '\0' ? snapshot->ip : "--");
     }
+    set_version_label_text(snapshot->ota.current_version);
     if (s_runtime_label != NULL) {
         lv_label_set_text(s_runtime_label, snapshot->uptime[0] != '\0' ? snapshot->uptime : "00:00:00");
     }
@@ -249,7 +273,7 @@ static lv_obj_t *page_status_create(void)
     create_status_row(scroll_content, 0, 0xFF9F43, "供电状态", "USB 5V / 0.42A", 0x1C2A3A, NULL);
     create_status_row(scroll_content, 50, 0x2BC670, "WiFi信号", "--", 0x2BC670, &s_wifi_label);
     create_status_row(scroll_content, 100, 0x3D8BFF, "IP地址", "--", 0x1C2A3A, &s_ip_label);
-    create_status_row(scroll_content, 150, 0xFF9F43, "固件版本", "v1.2.7", 0x1C2A3A, NULL);
+    create_status_row(scroll_content, 150, 0xFF9F43, "固件版本", "--", 0x1C2A3A, &s_version_label);
     create_status_row(scroll_content, 200, 0x2BC670, "运行时长", "00:00:00", 0x1C2A3A, &s_runtime_label);
     create_status_row(scroll_content, 250, 0x3D8BFF, "内存占用", "63%", 0x5F738C, NULL);
     create_status_row(scroll_content, 300, 0x3D8BFF, "上次同步", "--:--", 0x5F738C, &s_sync_label);
@@ -293,6 +317,7 @@ static void page_status_on_destroy(void)
     s_screen = NULL;
     s_wifi_label = NULL;
     s_ip_label = NULL;
+    s_version_label = NULL;
     s_runtime_label = NULL;
     s_sync_label = NULL;
     s_online_label = NULL;

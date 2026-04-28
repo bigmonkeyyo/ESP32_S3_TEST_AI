@@ -4,6 +4,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_log.h"
 
@@ -28,6 +29,9 @@ static void copy_text(char *dst, size_t dst_size, const char *src)
 
 static void snapshot_set_defaults(void)
 {
+    const esp_app_desc_t *app_desc = esp_app_get_description();
+    const char *version = (app_desc != NULL && app_desc->version[0] != '\0') ? app_desc->version : "--";
+
     memset(&s_snapshot, 0, sizeof(s_snapshot));
     s_snapshot.wifi_state = APP_BACKEND_WIFI_IDLE;
     s_snapshot.rssi = 0;
@@ -43,6 +47,11 @@ static void snapshot_set_defaults(void)
     copy_text(s_snapshot.weather.wind, sizeof(s_snapshot.weather.wind), "--");
     copy_text(s_snapshot.weather.aqi, sizeof(s_snapshot.weather.aqi), "AQI --");
     copy_text(s_snapshot.weather.updated_at, sizeof(s_snapshot.weather.updated_at), "--:--");
+    s_snapshot.ota.state = APP_BACKEND_OTA_IDLE;
+    s_snapshot.ota.progress = 0;
+    copy_text(s_snapshot.ota.current_version, sizeof(s_snapshot.ota.current_version), version);
+    copy_text(s_snapshot.ota.target_version, sizeof(s_snapshot.ota.target_version), "--");
+    copy_text(s_snapshot.ota.message, sizeof(s_snapshot.ota.message), "未检测");
 }
 
 esp_err_t backend_store_init(void)
@@ -200,6 +209,37 @@ void backend_store_set_weather(const app_backend_weather_t *weather, const char 
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
         s_snapshot.weather = *weather;
         if (message != NULL) {
+            copy_text(s_snapshot.message, sizeof(s_snapshot.message), message);
+        }
+        xSemaphoreGive(s_mutex);
+    }
+}
+
+void backend_store_set_ota(app_backend_ota_state_t state,
+                           const char *current_version,
+                           const char *target_version,
+                           int progress,
+                           const char *message)
+{
+    if (backend_store_init() != ESP_OK) {
+        return;
+    }
+
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+        s_snapshot.ota.state = state;
+        s_snapshot.ota.progress = progress;
+        if (current_version != NULL) {
+            copy_text(s_snapshot.ota.current_version,
+                      sizeof(s_snapshot.ota.current_version),
+                      current_version);
+        }
+        if (target_version != NULL) {
+            copy_text(s_snapshot.ota.target_version,
+                      sizeof(s_snapshot.ota.target_version),
+                      target_version);
+        }
+        if (message != NULL) {
+            copy_text(s_snapshot.ota.message, sizeof(s_snapshot.ota.message), message);
             copy_text(s_snapshot.message, sizeof(s_snapshot.message), message);
         }
         xSemaphoreGive(s_mutex);

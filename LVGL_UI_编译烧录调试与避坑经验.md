@@ -588,3 +588,64 @@ This section records the WiFi state-machine fixes after AMap weather and font di
   - `components/UI/fonts/generated/ui_font_sc_12.c`
   - `components/UI/fonts/generated/ui_font_sc_14.c`
 - No font regeneration was required for this fix.
+
+## OneNET OTA validation notes - 2026-04-28
+
+This section records the ESP32-S3 online OTA work that was verified by the user after Backend V1.
+
+### Current verified OTA state
+- Project name is now `ESP32S3-AIroot`.
+- OneNET product:
+  - product name: `ESP32S3-AIroot`
+  - product ID: `592ks3TWbW`
+  - protocol: MQTT
+  - data protocol: OneJson
+- OneNET device:
+  - device name: `ESP32S3-AIroot-001`
+- Partition table is now standard OTA layout:
+  - `otadata` at `0xd000`, size `0x2000`
+  - `ota_0` at `0x10000`, size `0x400000`
+  - `ota_1` at `0x410000`, size `0x400000`
+- User confirmed OTA is actually implemented and working.
+
+### OTA success evidence
+- OneNET task detected:
+  - `APP_OTA: update available target=1.2.8 tid=1373763 size=1691760 ...`
+- User confirmation path reached:
+  - UI prompt title: `固件升级`
+  - buttons: `更新`, `稍后`
+- Download and partition write reached:
+  - `APP_OTA: download start ... partition=ota_1`
+- Apply and reboot reached:
+  - `APP_OTA: OTA ready; rebooting to 1.2.8`
+- Rebooted into the new partition:
+  - boot log loaded app from offset `0x410000`
+  - boot log showed `App version: 1.2.8`
+- Version report after reboot:
+  - `APP_OTA: version reported 1.2.8`
+  - `APP_OTA: no OTA task`
+
+### OTA implementation pitfalls
+- MQTT is not the firmware download transport in this project. MQTT is used for OneNET connectivity/status/inform reply; version report, task check, and package download use OneNET `fuse-ota` HTTPS APIs.
+- Do not start all HTTPS work at once after IP. Weather HTTPS and OTA HTTPS can contend for TLS memory. Current order is MQTT -> SNTP -> weather -> OTA check.
+- Keep OneNET upgrade package names short and ASCII-only. `ota128.bin` and `ota129.bin` are safe examples.
+- Each OTA test must increase `CONFIG_APP_PROJECT_VER`. Otherwise the device will keep reporting the old version even if the binary filename changes.
+- If the screen shows an old version but serial shows a new `App version`, inspect UI binding before assuming OTA failed.
+- The status page previously hardcoded `v1.2.7`; the fix now uses `snapshot->ota.current_version`.
+- Do not print or document full OneNET keys. Current test credentials are present in `sdkconfig`; sanitize before committing publicly.
+
+### Current follow-up package
+- The UI version-display fix is built as version `1.2.9`.
+- Build output: `build/ESP32S3-AIroot.bin`.
+- Short OTA package copy: `tmp/ota129.bin`.
+- MD5: `835423FD1F3B20852F562B9061C9F2AC`.
+- Size: `1691952` bytes.
+
+### Future-agent rule
+For OTA bugs, always compare these three sources before editing:
+
+1. Boot log `App version`.
+2. OneNET reported version log `APP_OTA: version reported`.
+3. Status page `固件版本` label.
+
+If 1 and 2 match but 3 is wrong, this is a UI snapshot/binding problem, not an OTA problem.

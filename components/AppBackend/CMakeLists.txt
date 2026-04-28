@@ -2,7 +2,9 @@ idf_component_register(
     SRCS
         "app_backend.c"
         "backend_store.c"
+        "mqtt_service.c"
         "network_diag_service.c"
+        "ota_service.c"
         "wifi_service.c"
         "time_service.c"
         "weather_service.c"
@@ -16,9 +18,12 @@ idf_component_register(
         esp_event
         nvs_flash
         esp_http_client
+        esp_app_format
+        app_update
         esp-tls
         esp_timer
         lwip
         mbedtls
+        mqtt
         json
 )

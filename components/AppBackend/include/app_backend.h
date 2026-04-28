@@ -13,4 +13,5 @@ esp_err_t app_backend_wifi_scan_async(void);
 esp_err_t app_backend_wifi_connect_async(const char *ssid, const char *password);
 esp_err_t app_backend_wifi_disconnect_async(bool forget_saved);
 esp_err_t app_backend_weather_refresh_async(void);
+esp_err_t app_backend_ota_confirm_async(void);
 esp_err_t app_backend_get_snapshot(app_backend_snapshot_t *out);

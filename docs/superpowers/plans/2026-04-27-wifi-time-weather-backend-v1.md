@@ -259,3 +259,49 @@ Backend V1 lessons from this fix:
 - Do not use `xSemaphoreTake(..., 0)` for user-visible state commits unless dropping the update is explicitly acceptable.
 - Cached successful weather data and current network state are separate concepts. UI text must not describe cached data as "联网" after WiFi disconnects.
 - For WiFi page behavior, `SCANNING` is a short-lived backend operation state, not a disconnected idle state.
+
+## Current Progress Table Update - OneNET MQTT/OTA Online Upgrade - 2026-04-28
+
+This section records the post-Backend-V1 cloud OTA work. The user has verified that the current online OTA function works end to end.
+
+| Phase | Goal | Status | Evidence |
+| --- | --- | --- | --- |
+| 12.0 | Standard OTA partition layout | verified | `partitions-16MiB.csv` has `otadata`, `ota_0`, and `ota_1`; each OTA app partition is `0x400000` |
+| 12.1 | OneNET MQTT connectivity | verified | `APP_MQTT: connected`; device publishes firmware status to OneNET |
+| 12.2 | OneNET OTA version report | verified | `APP_OTA: version reported 1.2.8` |
+| 12.3 | OneNET OTA task detection | verified | `APP_OTA: update available target=1.2.8 tid=1373763 size=1691760 ...` |
+| 12.4 | User confirmation before update | verified | UI shows `固件升级` prompt; `更新` enqueues `APP_BACKEND_CMD_OTA_CONFIRM` |
+| 12.5 | Download before apply | verified | `APP_OTA: download start ... partition=ota_1`; data is written only after HTTP download stream is opened and validated |
+| 12.6 | MD5 and boot partition switch | verified | `APP_OTA: OTA ready; rebooting to 1.2.8 md5=...`; reboot loads app from `0x410000` |
+| 12.7 | Post-OTA version consistency | verified | Boot log shows `App version: 1.2.8`; OneNET returns `APP_OTA: no OTA task` after reporting `1.2.8` |
+| 12.8 | Status-page firmware version display | coded-and-built | Hardcoded `v1.2.7` removed; display now uses `snapshot->ota.current_version`; build confirms app version `1.2.9` |
+| 12.9 | OTA experience manual | documented | `ESP32+ONENET+OTA开发经验.md` created for future agents |
+
+Current implementation notes:
+- OTA files:
+  - `components/AppBackend/ota_service.c`
+  - `components/AppBackend/mqtt_service.c`
+  - `components/UI/core/ui_data_bindings.c`
+  - `components/UI/pages/page_status.c`
+  - `components/AppBackend/Kconfig`
+- MQTT is used for device connectivity, property/status publish, and OTA inform reply.
+- Actual version report, task check, and firmware download use OneNET `fuse-ota` HTTPS APIs.
+- `app_backend_handle_ip_ready()` intentionally starts OTA after MQTT, SNTP, and weather sync to reduce concurrent TLS pressure.
+- OTA writes to `esp_ota_get_next_update_partition(NULL)`, checks size and MD5, then calls `esp_ota_set_boot_partition()`.
+- The status page previously showed `v1.2.7` because the UI text was hardcoded. This was not an OTA failure. The fix initializes `snapshot.ota.current_version` from `esp_app_get_description()` and updates the status page label from the backend snapshot.
+
+Verified artifacts:
+- Successful OTA test package: `tmp/ota128.bin`.
+- Latest follow-up package for the version-display fix: `tmp/ota129.bin`.
+- `tmp/ota129.bin` MD5: `835423FD1F3B20852F562B9061C9F2AC`.
+- Latest build output: `build/ESP32S3-AIroot.bin`.
+- Latest build confirms `App "ESP32S3-AIroot" version: 1.2.9`.
+- Latest binary size: `0x19d130`; smallest app partition is `0x400000`, leaving about 60% free.
+
+OTA lessons from this round:
+- Do not treat MQTT login success as proof that OTA HTTP auth is correct. MQTT uses the device key; `fuse-ota` uses the product access key plus numeric device ID.
+- Do not rely on the OneNET web page spinner alone. The serial log is the source of truth for version report, task detection, download, MD5, and boot partition switch.
+- Keep OTA package filenames short and ASCII-only, for example `ota128.bin` or `ota129.bin`.
+- For every OTA test, increment `CONFIG_APP_PROJECT_VER`; changing only the binary filename does not change the version reported by `esp_app_get_description()`.
+- If UI and serial disagree about the firmware version, trust the boot log first and inspect whether the UI is hardcoded or missing snapshot binding.
+- Do not print or document full OneNET secrets. The current test credentials exist in `sdkconfig`; they must be moved out or replaced before public commit.
