@@ -567,10 +567,33 @@ SCREEN_UNLOADED
 - 设备重启后串口显示 `App version: 1.2.8`，并从 `ota_1` 分区启动。
 - UI 旧版本显示问题不是 OTA 失败，而是状态页写死 `v1.2.7`，现已修复并构建为 `1.2.9`。
 
+## 18. 固件版本页与 OTA V1 实机完成记录 - 2026-04-28
+
+在 OneNET OTA 基础链路之后，已按 Figma 320x240 设计继续落地固件版本页和用户驱动的 OTA 交互。
+
+完成内容：
+
+1. `components/UI/pages/page_firmware.c`：新增固件版本页，显示当前版本，底部提供“检查更新”按钮，并接入 OTA ready/progress/done/failed 状态。
+2. `components/UI/core/ui_data_bindings.c`：继续通过 backend snapshot 驱动 OTA 弹窗，不让 UI 直接访问 OneNET 或 OTA 任务细节。
+3. `components/AppBackend/ota_service.c`：补齐 OTA 未配置、版本上报失败、检查失败等失败闭环，避免检查失败时 UI 无反馈。
+4. `components/AppBackend/ota_service.c` / `ota_service.h`：新增 `ota_service_report_current_version()`，让升级后的固件重连后主动上报真实版本。
+5. `components/AppBackend/app_backend.c`：联网后按 `MQTT -> SNTP -> OTA version report -> weather` 顺序运行，降低 HTTPS/TLS 并发压力。
+6. `tools/gen_ui_fonts.py` 与生成字体：补充 OTA UI 所需字形，并增加更粗的中文字体文件改善按钮和标题观感。
+
+验证结论：
+
+- 模拟器截图已生成到 `tmp\sim_screens\`，包括 `firmware_after_ota_backend.bmp` 与 `ota_failed_after_backend.bmp`。
+- OneNET `1.3.0 -> 1.3.1` 已通过 COM7 实机闭环，日志为 `tmp\ota_130_to_131_com7.log`。
+- 成功路径包含：版本上报、检查到 `1.3.1`、等待 UI 确认、下载进度到 100%、MD5 校验、切换到 `ota_1`、用户点击重启、重启后 `App version: 1.3.1`、再次上报 `1.3.1` 并显示无 OTA 任务。
+- 为了让用户再次测试，当前已重新构建并烧录 `1.3.0`，基线日志为 `tmp\baseline_130_again_com7.log`。
+- 当前 `sdkconfig` 保持 `CONFIG_APP_PROJECT_VER="1.3.0"`；`tmp\ota131.bin` 仍可作为 OneNET `1.3.1` 包使用。
+
 长期经验已沉淀到：
 
 ```text
 ESP32+ONENET+OTA开发经验.md
 LVGL_UI_编译烧录调试与避坑经验.md
 docs/superpowers/plans/2026-04-27-wifi-time-weather-backend-v1.md
+docs/superpowers/plans/2026-04-28-ota-ui-backend-adaptation-v1.md
+docs/superpowers/changelogs/2026-04-28-ota-firmware-ui-backend-v1.md
 ```

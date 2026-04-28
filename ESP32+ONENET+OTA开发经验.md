@@ -11,10 +11,13 @@
 - UI 可以弹出“固件升级”确认框，让用户选择“更新”或“稍后”。
 - 点击“更新”后，设备先完整下载升级包，再写入空闲 OTA 分区。
 - 下载完成后会做大小和 MD5 校验。
-- 校验通过后调用 `esp_ota_set_boot_partition()` 切换启动分区并重启。
+- 校验通过后调用 `esp_ota_set_boot_partition()` 切换启动分区。
+- 当前 UI 策略是下载完成后提示用户选择“立即重启”或“稍后重启”，用户确认后再重启。
 - 重启后设备会从新 OTA 分区启动，并向 OneNET 上报新版本。
 
 这次实机链路已经证明：问题不在 OTA 启动结构，而在版本显示曾经被 UI 写死为 `v1.2.7`。该显示问题已改为从 `esp_app_get_description()` 和后端快照读取真实版本。
+
+2026-04-28 新增实机结论：固件版本页和 OTA 弹窗/进度/下载完成界面已落地到工程。OneNET `1.3.0 -> 1.3.1` 已通过 COM7 实机闭环，日志见 `tmp\ota_130_to_131_com7.log`。验证完成后，设备已重新烧回 `1.3.0` 作为再次 OTA 测试基线，日志见 `tmp\baseline_130_again_com7.log`。
 
 ## 2. 工程现状
 
@@ -79,6 +82,7 @@ components/AppBackend/include/app_backend.h
 components/AppBackend/include/app_backend_types.h
 components/UI/core/ui_data_bindings.c
 components/UI/pages/page_status.c
+components/UI/pages/page_firmware.c
 components/AppBackend/Kconfig
 ```
 
@@ -89,11 +93,11 @@ WiFi got IP
   -> app_backend_handle_ip_ready()
   -> mqtt_service_start()
   -> time_service_sync()
+  -> ota_service_report_current_version()
   -> app_backend_refresh_weather_with_diag()
-  -> ota_service_start()
 ```
 
-这样安排的原因是降低并发 TLS 握手压力。之前天气 HTTPS 和 OTA HTTPS 同时握手，出现过 `mbedtls_ssl_setup -0x7F00` 一类内存/资源问题。当前策略是先完成天气 HTTPS，再启动 OTA 检测。
+这样安排的原因是降低并发 TLS 握手压力。之前天气 HTTPS 和 OTA HTTPS 同时握手，出现过 `mbedtls_ssl_setup -0x7F00` 一类内存/资源问题。当前策略是联网后先完成 MQTT 和时间同步，再上报当前 OTA 版本，随后刷新天气。用户进入固件版本页点击“检查更新”时再主动执行 OTA 检查。
 
 ## 5. OneNET 平台侧经验
 
@@ -146,7 +150,7 @@ payload: {"f_version":"当前版本","s_version":"当前版本"}
 成功日志：
 
 ```text
-APP_OTA: version reported 1.2.8
+APP_OTA: version reported 1.3.0
 ```
 
 ### 6.2 检查升级任务
@@ -160,7 +164,7 @@ GET /fuse-ota/{product_id}/{device_name}/check?type={type}&version={current_vers
 有任务时会记录：
 
 ```text
-APP_OTA: update available target=1.2.8 tid=1373763 size=1691760 type=2 md5=...
+APP_OTA: update available target=1.3.1 tid=1373828 size=1786224 type=... md5=...
 APP_OTA: waiting for UI confirmation before download
 ```
 
@@ -220,22 +224,24 @@ esp_ota_begin(...)
 校验 MD5
 esp_ota_end()
 esp_ota_set_boot_partition()
-esp_restart()
+等待用户点击立即重启后 esp_restart()
 ```
 
 成功日志：
 
 ```text
-APP_OTA: download start tid=1373763 target=1.2.8 size=1691760 partition=ota_1
-APP_OTA: OTA ready; rebooting to 1.2.8 md5=...
+APP_OTA: download start tid=1373828 target=1.3.1 size=1786224 content_length=1786224 partition=ota_1
+APP_OTA: download progress 100% (1786224/1786224)
+APP_OTA: OTA ready; waiting for user reboot to 1.3.1 md5=a74229faa6e771854712f2feca723ed1
+APP_OTA: restarting by user request
 ```
 
 重启后成功证据：
 
 ```text
 Loaded app from partition at offset 0x410000
-App version: 1.2.8
-APP_OTA: version reported 1.2.8
+App version: 1.3.1
+APP_OTA: version reported 1.3.1
 APP_OTA: no OTA task
 ```
 
@@ -260,7 +266,8 @@ components/UI/pages/page_status.c 里固件版本被写死为 "v1.2.7"。
 - `backend_store.c` 初始化时用 `esp_app_get_description()` 写入 `snapshot.ota.current_version`。
 - `page_status.c` 保存固件版本 label 指针。
 - `page_status_apply_snapshot()` 根据 `snapshot->ota.current_version` 更新页面。
-- 后续版本包升到 `1.2.9` 验证显示链路。
+- 固件版本页 `page_firmware.c` 继续读取同一个 OTA snapshot，避免再次写死版本号。
+- `1.3.0 -> 1.3.1` OTA 后已验证串口版本、OneNET 上报版本和 UI 版本来源均来自真实固件描述。
 
 经验：
 
@@ -281,6 +288,7 @@ components/UI/pages/page_status.c 里固件版本被写死为 "v1.2.7"。
 ```text
 tmp/ota128.bin
 tmp/ota129.bin
+tmp/ota131.bin
 ```
 
 经验：
@@ -349,7 +357,7 @@ APP_ONENET_OTA_DEV_ID
 每次要测试 OTA，都要把固件版本升高：
 
 ```text
-CONFIG_APP_PROJECT_VER="1.2.9"
+CONFIG_APP_PROJECT_VER="1.3.1"
 ```
 
 然后重新 build，上传新 bin，并在 OneNET 新增对应版本升级包。
@@ -371,6 +379,7 @@ components/AppBackend/ota_service.c
 components/AppBackend/mqtt_service.c
 components/UI/core/ui_data_bindings.c
 components/UI/pages/page_status.c
+components/UI/pages/page_firmware.c
 partitions-16MiB.csv
 sdkconfig
 ```
@@ -414,7 +423,9 @@ APP_OTA: version reported
 APP_OTA: update available
 APP_OTA: waiting for UI confirmation before download
 APP_OTA: download start
-APP_OTA: OTA ready; rebooting to
+APP_OTA: download progress 100%
+APP_OTA: OTA ready; waiting for user reboot to
+APP_OTA: restarting by user request
 Loaded app from partition at offset
 App version:
 APP_OTA: no OTA task
@@ -441,8 +452,6 @@ mbedtls_ssl_setup
 当前 OTA 是可用闭环，后续可以按风险从低到高推进：
 
 1. 把 OneNET 密钥从 `sdkconfig` 中迁出，避免误提交。
-2. 给 OTA 状态页增加下载进度展示，当前后端已有 `ota.progress`。
-3. 增加 OTA 失败原因细分显示，例如鉴权失败、无任务、下载失败、MD5 不匹配。
+2. 增加 OTA 失败原因细分验证，例如鉴权失败、无任务、下载失败、MD5 不匹配。
 4. 增加启动后 `esp_ota_mark_app_valid_cancel_rollback()` 之类的回滚确认策略。
 5. 如果后续固件超过 4MB，再重新评估分区表，优先裁剪 `vfs/storage` 或增大 OTA 分区。
-

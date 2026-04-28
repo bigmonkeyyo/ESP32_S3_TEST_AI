@@ -74,7 +74,7 @@ typedef struct {
 
 static const char *TAG = "APP_OTA";
 
-static bool s_started;
+static bool s_check_in_progress;
 static bool s_download_started;
 static ota_pending_task_t s_pending_task;
 
@@ -305,6 +305,15 @@ static void ota_set_state(app_backend_ota_state_t state,
     ota_notify_changed();
 }
 
+static void ota_set_failed_check_state(const char *version, const char *message)
+{
+    ota_set_state(APP_BACKEND_OTA_FAILED,
+                  version,
+                  NULL,
+                  0,
+                  message != NULL ? message : "检测失败，请稍后重试");
+}
+
 static void bytes_to_hex(const uint8_t *bytes, size_t len, char *out, size_t out_size)
 {
     static const char hex[] = "0123456789abcdef";
@@ -471,9 +480,11 @@ static esp_err_t ota_http_download_to_partition(const ota_pending_task_t *task)
     mbedtls_md_context_t md_ctx;
     const mbedtls_md_info_t *md_info = NULL;
     int content_length = 0;
+    int progress_total = 0;
     int status = 0;
     int read_total = 0;
     int last_progress = -1;
+    int last_logged_progress = -5;
     esp_err_t err = ESP_OK;
 
     if ((task == NULL) || !task->valid || (task->tid <= 0)) {
@@ -544,9 +555,16 @@ static esp_err_t ota_http_download_to_partition(const ota_pending_task_t *task)
         err = ESP_ERR_INVALID_SIZE;
         goto cleanup_http;
     }
+    if ((task->size <= 0) && (content_length > 0) && ((uint32_t)content_length > update_partition->size)) {
+        ESP_LOGW(TAG, "image too large content_length=%d partition=%lu",
+                 content_length, (unsigned long)update_partition->size);
+        err = ESP_ERR_INVALID_SIZE;
+        goto cleanup_http;
+    }
+    progress_total = task->size > 0 ? task->size : content_length;
 
-    ESP_LOGI(TAG, "download start tid=%d target=%s size=%d partition=%s",
-             task->tid, task->target, task->size, update_partition->label);
+    ESP_LOGI(TAG, "download start tid=%d target=%s size=%d content_length=%d partition=%s",
+             task->tid, task->target, task->size, content_length, update_partition->label);
     err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "ota begin failed: %s", esp_err_to_name(err));
@@ -581,8 +599,8 @@ static esp_err_t ota_http_download_to_partition(const ota_pending_task_t *task)
         }
 
         read_total += read_len;
-        if (task->size > 0) {
-            progress = (read_total * 100) / task->size;
+        if (progress_total > 0) {
+            progress = (read_total * 100) / progress_total;
             if (progress > 100) {
                 progress = 100;
             }
@@ -590,6 +608,10 @@ static esp_err_t ota_http_download_to_partition(const ota_pending_task_t *task)
                 last_progress = progress;
                 backend_store_set_ota(APP_BACKEND_OTA_DOWNLOADING, NULL, task->target, progress, "正在下载升级包");
                 ota_notify_changed();
+                if ((progress == 100) || (progress >= (last_logged_progress + 5))) {
+                    last_logged_progress = progress;
+                    ESP_LOGI(TAG, "download progress %d%% (%d/%d)", progress, read_total, progress_total);
+                }
             }
         }
     }
@@ -597,8 +619,8 @@ static esp_err_t ota_http_download_to_partition(const ota_pending_task_t *task)
     if (err != ESP_OK) {
         goto cleanup_ota;
     }
-    if ((task->size > 0) && (read_total != task->size)) {
-        ESP_LOGW(TAG, "download incomplete expected=%d actual=%d", task->size, read_total);
+    if ((progress_total > 0) && (read_total != progress_total)) {
+        ESP_LOGW(TAG, "download incomplete expected=%d actual=%d", progress_total, read_total);
         err = ESP_ERR_INVALID_SIZE;
         goto cleanup_ota;
     }
@@ -626,10 +648,9 @@ static esp_err_t ota_http_download_to_partition(const ota_pending_task_t *task)
         goto cleanup_http;
     }
 
-    ESP_LOGI(TAG, "OTA ready; rebooting to %s md5=%s", task->target, actual_md5);
-    ota_set_state(APP_BACKEND_OTA_DONE, NULL, task->target, 100, "升级完成，即将重启");
-    vTaskDelay(pdMS_TO_TICKS(1200));
-    esp_restart();
+    ESP_LOGI(TAG, "OTA ready; waiting for user reboot to %s md5=%s", task->target, actual_md5);
+    ota_set_state(APP_BACKEND_OTA_DONE, NULL, task->target, 100, "升级包已准备完成");
+    s_download_started = false;
 
 cleanup_ota:
     if (ota_handle != 0) {
@@ -667,41 +688,80 @@ static void ota_service_task(void *arg)
 {
     const esp_app_desc_t *desc = esp_app_get_description();
     const char *version = (desc != NULL) ? desc->version : "unknown";
+    esp_err_t err;
 
     (void)arg;
 
     if (!ota_service_configured()) {
         ESP_LOGW(TAG, "not configured; set product access key and numeric dev_id");
+        ota_set_failed_check_state(version, "OTA 未配置，请检查参数");
+        s_check_in_progress = false;
         vTaskDelete(NULL);
         return;
     }
 
     ota_set_state(APP_BACKEND_OTA_CHECKING, version, NULL, 0, "正在检测新版本");
-    (void)ota_service_report_version(version);
-    (void)ota_service_check_task(version);
+    err = ota_service_report_version(version);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "version report failed: %s", esp_err_to_name(err));
+        ota_set_failed_check_state(version, "版本上报失败，请检查网络");
+        s_check_in_progress = false;
+        vTaskDelete(NULL);
+        return;
+    }
 
+    err = ota_service_check_task(version);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "task check failed: %s", esp_err_to_name(err));
+        ota_set_failed_check_state(version, "检测失败，请稍后重试");
+    }
+
+    s_check_in_progress = false;
     vTaskDelete(NULL);
 }
 
-esp_err_t ota_service_start(void)
+esp_err_t ota_service_check_update(void)
 {
 #if !CONFIG_APP_ONENET_OTA_ENABLE
     ESP_LOGI(TAG, "disabled");
     return ESP_OK;
 #endif
 
-    if (s_started) {
+    if (s_check_in_progress) {
         return ESP_OK;
     }
 
-    s_started = true;
+    s_check_in_progress = true;
     if (xTaskCreate(ota_service_task, "app_ota", ONENET_OTA_TASK_STACK, NULL,
                     ONENET_OTA_TASK_PRIORITY, NULL) != pdPASS) {
-        s_started = false;
+        s_check_in_progress = false;
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG, "start requested");
     return ESP_OK;
+}
+
+esp_err_t ota_service_report_current_version(void)
+{
+#if !CONFIG_APP_ONENET_OTA_ENABLE
+    ESP_LOGI(TAG, "version report disabled");
+    return ESP_OK;
+#else
+    const esp_app_desc_t *desc = esp_app_get_description();
+    const char *version = (desc != NULL) ? desc->version : "unknown";
+    esp_err_t err;
+
+    if (!ota_service_configured()) {
+        ESP_LOGW(TAG, "version report skipped: OTA not configured");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    err = ota_service_report_version(version);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "current version report failed: %s", esp_err_to_name(err));
+    }
+    return err;
+#endif
 }
 
 esp_err_t ota_service_confirm_update(void)
@@ -728,5 +788,12 @@ esp_err_t ota_service_confirm_update(void)
         free(task);
         return ESP_ERR_NO_MEM;
     }
+    return ESP_OK;
+}
+
+esp_err_t ota_service_restart_now(void)
+{
+    ESP_LOGI(TAG, "restarting by user request");
+    esp_restart();
     return ESP_OK;
 }

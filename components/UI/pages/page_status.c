@@ -17,6 +17,7 @@ static lv_obj_t *s_runtime_label = NULL;
 static lv_obj_t *s_sync_label = NULL;
 static lv_obj_t *s_online_label = NULL;
 static bool s_back_home_pending = false;
+static bool s_firmware_pending = false;
 
 static const char *TAG = "PAGE_STATUS";
 
@@ -44,15 +45,21 @@ static lv_obj_t *create_round_button(
     lv_obj_t *btn = lv_btn_create(parent);
     lv_obj_t *lbl = lv_label_create(btn);
 
+    lv_obj_remove_style_all(btn);
     lv_obj_set_pos(btn, x, y);
     lv_obj_set_size(btn, w, h);
     lv_obj_set_style_radius(btn, 10, 0);
     lv_obj_set_style_bg_color(btn, c_hex(bg), 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(btn, 1, 0);
-    lv_obj_set_style_border_color(btn, c_hex(0xCFE2F8), 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_set_style_pad_all(btn, 0, 0);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_label_set_text(lbl, text);
+    lv_obj_set_width(lbl, w);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(lbl, font, 0);
     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
     lv_obj_center(lbl);
@@ -186,6 +193,34 @@ static void page_status_home_cb(lv_event_t *e)
     }
 }
 
+static void page_status_firmware_async(void *user_data)
+{
+    (void)user_data;
+
+    if (ui_page_push(UI_PAGE_FIRMWARE, NULL, UI_ANIM_MOVE_LEFT) != ESP_OK) {
+        ESP_LOGW(TAG, "ui_page_push firmware failed");
+    }
+
+    s_firmware_pending = false;
+}
+
+static void page_status_firmware_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
+        return;
+    }
+
+    if (s_firmware_pending) {
+        return;
+    }
+
+    s_firmware_pending = true;
+    if (lv_async_call(page_status_firmware_async, NULL) != LV_RES_OK) {
+        s_firmware_pending = false;
+        ESP_LOGW(TAG, "lv_async_call firmware failed");
+    }
+}
+
 static void page_status_refresh_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
@@ -209,6 +244,7 @@ static lv_obj_t *page_status_create(void)
     lv_obj_t *scroll_thumb = NULL;
     lv_obj_t *footer = NULL;
     lv_obj_t *btn = NULL;
+    lv_obj_t *row = NULL;
 
     s_screen = lv_obj_create(NULL);
     lv_obj_set_style_radius(s_screen, 14, 0);
@@ -273,7 +309,9 @@ static lv_obj_t *page_status_create(void)
     create_status_row(scroll_content, 0, 0xFF9F43, "供电状态", "USB 5V / 0.42A", 0x1C2A3A, NULL);
     create_status_row(scroll_content, 50, 0x2BC670, "WiFi信号", "--", 0x2BC670, &s_wifi_label);
     create_status_row(scroll_content, 100, 0x3D8BFF, "IP地址", "--", 0x1C2A3A, &s_ip_label);
-    create_status_row(scroll_content, 150, 0xFF9F43, "固件版本", "--", 0x1C2A3A, &s_version_label);
+    row = create_status_row(scroll_content, 150, 0xFF9F43, "固件版本", "--", 0x1C2A3A, &s_version_label);
+    lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(row, page_status_firmware_cb, LV_EVENT_CLICKED, NULL);
     create_status_row(scroll_content, 200, 0x2BC670, "运行时长", "00:00:00", 0x1C2A3A, &s_runtime_label);
     create_status_row(scroll_content, 250, 0x3D8BFF, "内存占用", "63%", 0x5F738C, NULL);
     create_status_row(scroll_content, 300, 0x3D8BFF, "上次同步", "--:--", 0x5F738C, &s_sync_label);
@@ -322,6 +360,7 @@ static void page_status_on_destroy(void)
     s_sync_label = NULL;
     s_online_label = NULL;
     s_back_home_pending = false;
+    s_firmware_pending = false;
 }
 
 static void page_status_on_show(void *args)

@@ -8,7 +8,9 @@ typedef enum {
     APP_BACKEND_CMD_WIFI_DISCONNECT,
     APP_BACKEND_CMD_WEATHER_REFRESH,
     APP_BACKEND_CMD_IP_READY,
+    APP_BACKEND_CMD_OTA_CHECK,
     APP_BACKEND_CMD_OTA_CONFIRM,
+    APP_BACKEND_CMD_OTA_RESTART,
 } app_backend_cmd_id_t;
 
 void app_backend_notify_changed(void);

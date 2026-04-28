@@ -12,17 +12,22 @@ SCAN_DIRS = [
     ROOT / "components" / "AppBackend",
 ]
 
-FONT_REGULAR = pathlib.Path("C:/Windows/Fonts/Deng.ttf")
+FONT_REGULAR = pathlib.Path("C:/Windows/Fonts/SourceHanSansSC-Medium.ttf")
 FONT_BOLD = pathlib.Path("C:/Windows/Fonts/Dengb.ttf")
-FONT_BY_SIZE = {
-    11: FONT_REGULAR,
-    12: FONT_REGULAR,
-    13: FONT_REGULAR,
-    14: FONT_REGULAR,
-    18: FONT_BOLD,
-    24: FONT_BOLD,
-    30: FONT_BOLD,
-}
+FONT_HEAVY = pathlib.Path("C:/Windows/Fonts/Dengb.ttf")
+FONT_TITLE_HEAVY = pathlib.Path("C:/Windows/Fonts/simhei.ttf")
+FONT_SPECS = [
+    ("ui_font_sc_11", 11, FONT_REGULAR),
+    ("ui_font_sc_12", 12, FONT_REGULAR),
+    ("ui_font_sc_12_heavy", 12, FONT_HEAVY),
+    ("ui_font_sc_13", 13, FONT_REGULAR),
+    ("ui_font_sc_14", 14, FONT_REGULAR),
+    ("ui_font_sc_14_bold", 14, FONT_HEAVY),
+    ("ui_font_sc_18", 18, FONT_BOLD),
+    ("ui_font_sc_18_heavy", 18, FONT_TITLE_HEAVY),
+    ("ui_font_sc_24", 24, FONT_BOLD),
+    ("ui_font_sc_30", 30, FONT_BOLD),
+]
 
 TEXT_SAMPLES = [
     "14:28 26°C 26℃ 体感28°C 体感28℃",
@@ -51,6 +56,7 @@ TEXT_SAMPLES = [
     "强 中 弱",
     "Office_2.4G Office_5G Guest_WiFi",
     "、·：%",
+    "固件升级 检测到新版本 v1.2.9 → v1.3.0 OTA升级中 请勿断电或重启设备 1.15 MB / 1.69 MB 请保持供电",
 ]
 
 
@@ -78,10 +84,9 @@ def build_symbols() -> str:
     return "".join(sorted(symbols))
 
 
-def gen_font(size: int, symbols: str) -> None:
+def gen_font(name: str, size: int, font_path: pathlib.Path, symbols: str) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_c = OUT_DIR / f"ui_font_sc_{size}.c"
-    font_path = FONT_BY_SIZE[size]
+    out_c = OUT_DIR / f"{name}.c"
 
     npx_cmd = shutil.which("npx.cmd") or shutil.which("npx")
     if npx_cmd is None:
@@ -105,7 +110,7 @@ def gen_font(size: int, symbols: str) -> None:
         "--symbols",
         symbols,
         "--lv-font-name",
-        f"ui_font_sc_{size}",
+        name,
         "--force-fast-kern-format",
         "-o",
         str(out_c),
@@ -115,15 +120,15 @@ def gen_font(size: int, symbols: str) -> None:
 
 
 def main() -> int:
-    required = sorted(set(FONT_BY_SIZE.values()))
+    required = sorted({font_path for _, _, font_path in FONT_SPECS})
     for f in required:
         if not f.exists():
             print(f"font not found: {f}", file=sys.stderr)
             return 1
 
     symbols = build_symbols()
-    for size in sorted(FONT_BY_SIZE.keys()):
-        gen_font(size, symbols)
+    for name, size, font_path in FONT_SPECS:
+        gen_font(name, size, font_path, symbols)
 
     return 0
 

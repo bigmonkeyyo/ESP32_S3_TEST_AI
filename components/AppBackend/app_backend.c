@@ -101,8 +101,12 @@ static void app_backend_handle_ip_ready(void)
         app_backend_schedule_online_retry(APP_BACKEND_ONLINE_RETRY_MS);
     }
 
+    esp_err_t ota_err = ota_service_report_current_version();
+    if (ota_err != ESP_OK) {
+        ESP_LOGW(TAG, "OTA version report after IP ready failed: %s", esp_err_to_name(ota_err));
+    }
+
     app_backend_refresh_weather_with_diag();
-    (void)ota_service_start();
 }
 
 static void app_backend_task(void *arg)
@@ -131,8 +135,14 @@ static void app_backend_task(void *arg)
             case APP_BACKEND_CMD_IP_READY:
                 app_backend_handle_ip_ready();
                 break;
+            case APP_BACKEND_CMD_OTA_CHECK:
+                (void)ota_service_check_update();
+                break;
             case APP_BACKEND_CMD_OTA_CONFIRM:
                 (void)ota_service_confirm_update();
+                break;
+            case APP_BACKEND_CMD_OTA_RESTART:
+                (void)ota_service_restart_now();
                 break;
             default:
                 ESP_LOGW(TAG, "unknown cmd=%d", (int)cmd.id);
@@ -262,9 +272,19 @@ esp_err_t app_backend_weather_refresh_async(void)
     return app_backend_post_simple(APP_BACKEND_CMD_WEATHER_REFRESH);
 }
 
+esp_err_t app_backend_ota_check_async(void)
+{
+    return app_backend_post_simple(APP_BACKEND_CMD_OTA_CHECK);
+}
+
 esp_err_t app_backend_ota_confirm_async(void)
 {
     return app_backend_post_simple(APP_BACKEND_CMD_OTA_CONFIRM);
+}
+
+esp_err_t app_backend_ota_restart_async(void)
+{
+    return app_backend_post_simple(APP_BACKEND_CMD_OTA_RESTART);
 }
 
 esp_err_t app_backend_get_snapshot(app_backend_snapshot_t *out)

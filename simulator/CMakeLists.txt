@@ -18,9 +18,12 @@ add_executable(lvgl_sim
     ../ui_page_sim.c
     ../components/UI/fonts/generated/ui_font_sc_11.c
     ../components/UI/fonts/generated/ui_font_sc_12.c
+    ../components/UI/fonts/generated/ui_font_sc_12_heavy.c
     ../components/UI/fonts/generated/ui_font_sc_13.c
     ../components/UI/fonts/generated/ui_font_sc_14.c
+    ../components/UI/fonts/generated/ui_font_sc_14_bold.c
     ../components/UI/fonts/generated/ui_font_sc_18.c
+    ../components/UI/fonts/generated/ui_font_sc_18_heavy.c
     ../components/UI/fonts/generated/ui_font_sc_24.c
     ../components/UI/fonts/generated/ui_font_sc_30.c
 )
