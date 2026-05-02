@@ -98,6 +98,30 @@ $env:PATH="$prefix;$env:PATH"
 & 'D:\ESP-IDF\Espressif\python_env\idf5.2_py3.11_env\Scripts\python.exe' 'D:\ESP-IDF\Espressif\frameworks\esp-idf-v5.2.1\tools\idf.py' --no-hints --no-ccache -C 'D:\ESP32-APP\18_touch' build
 ```
 
+## 2026-05-03 Latest Progress (V1.3.0 Gyro Ball)
+
+- Current branch: `feat/lvgl-ui-page-framework`
+- New UI path:
+  - Settings page adds `Gyro Verify` row
+  - Navigation to new page id `UI_PAGE_GYRO`
+- New files:
+  - `components/UI/pages/page_gyro.c`
+  - `components/UI/pages/page_gyro.h`
+  - `components/BSP/QMI8658A/qmi8658a.c`
+  - `components/BSP/QMI8658A/qmi8658a.h`
+  - `components/BSP/QMI8658A/imu.c`
+  - `components/BSP/QMI8658A/imu.h`
+- Runtime behavior updates:
+  - LVGL startup moved ahead of IMU init (IMU init in async task)
+  - Gyro ball uses tilt-only control (no constant gravity bias)
+  - Added zero calibration + deadzone to reduce static drift
+  - Added boundary bounce behavior
+  - Left/right control direction corrected by X-axis inversion
+- Recent validation:
+  - Build and flash verified on `COM8`
+  - Serial logs show `QMI8658A init ok` and continuous `GYRO` updates
+  - First frame/backlight and UI startup appear before IMU calibration completes
+
 ## 2026-04-28 OneNET OTA 接手补充
 
 当前 OneNET OTA 已由用户实机确认可用。接手 OTA 相关问题前必须先读：

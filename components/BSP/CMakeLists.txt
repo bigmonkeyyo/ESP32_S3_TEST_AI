@@ -3,14 +3,16 @@ set(src_dirs
             LCD
             LED
             TOUCH
-            XL9555)
+            XL9555
+            QMI8658A)
 
 set(include_dirs
             IIC
             LCD
             LED
             TOUCH
-            XL9555)
+            XL9555
+            QMI8658A)
 
 set(requires
             driver

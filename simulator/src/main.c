@@ -10,7 +10,7 @@
 
 static void print_usage(const char *app)
 {
-    printf("Usage: %s [--page <home|settings|status|firmware|ota_ready|ota_progress|ota_complete|ota_failed|wifi>] [--screenshot <bmp_path>]\n", app);
+    printf("Usage: %s [--page <home|settings|status|firmware|ota_ready|ota_progress|ota_complete|ota_failed|gyro|wifi>] [--screenshot <bmp_path>]\n", app);
 }
 
 static bool parse_page_id(const char *name, ui_page_sim_id_t *out_page)
@@ -49,6 +49,10 @@ static bool parse_page_id(const char *name, ui_page_sim_id_t *out_page)
     }
     if (strcmp(name, "ota_failed") == 0) {
         *out_page = UI_PAGE_SIM_OTA_FAILED;
+        return true;
+    }
+    if (strcmp(name, "gyro") == 0) {
+        *out_page = UI_PAGE_SIM_GYRO;
         return true;
     }
     if (strcmp(name, "wifi") == 0) {

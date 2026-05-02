@@ -16,6 +16,7 @@ typedef enum {
     SIM_PAGE_OTA_PROGRESS,
     SIM_PAGE_OTA_COMPLETE,
     SIM_PAGE_OTA_FAILED,
+    SIM_PAGE_GYRO,
     SIM_PAGE_WIFI,
 } sim_page_t;
 
@@ -41,6 +42,7 @@ static lv_obj_t *s_ota_ready = NULL;
 static lv_obj_t *s_ota_progress = NULL;
 static lv_obj_t *s_ota_complete = NULL;
 static lv_obj_t *s_ota_failed = NULL;
+static lv_obj_t *s_gyro = NULL;
 static lv_obj_t *s_wifi = NULL;
 
 static lv_obj_t *s_home_city = NULL;
@@ -116,6 +118,9 @@ static void open_page(sim_page_t page, lv_scr_load_anim_t anim)
         case SIM_PAGE_OTA_FAILED:
             target = s_ota_failed;
             break;
+        case SIM_PAGE_GYRO:
+            target = s_gyro;
+            break;
         case SIM_PAGE_WIFI:
             target = s_wifi;
             break;
@@ -158,6 +163,9 @@ void ui_page_sim_open(ui_page_sim_id_t page_id)
             break;
         case UI_PAGE_SIM_OTA_FAILED:
             open_page(SIM_PAGE_OTA_FAILED, LV_SCR_LOAD_ANIM_NONE);
+            break;
+        case UI_PAGE_SIM_GYRO:
+            open_page(SIM_PAGE_GYRO, LV_SCR_LOAD_ANIM_NONE);
             break;
         case UI_PAGE_SIM_WIFI:
             open_page(SIM_PAGE_WIFI, LV_SCR_LOAD_ANIM_NONE);
@@ -266,6 +274,20 @@ static void settings_to_status_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
         open_page(SIM_PAGE_STATUS, LV_SCR_LOAD_ANIM_MOVE_LEFT);
+    }
+}
+
+static void settings_to_gyro_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+        open_page(SIM_PAGE_GYRO, LV_SCR_LOAD_ANIM_MOVE_LEFT);
+    }
+}
+
+static void gyro_back_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+        open_page(SIM_PAGE_SETTINGS, LV_SCR_LOAD_ANIM_MOVE_RIGHT);
     }
 }
 
@@ -1010,7 +1032,7 @@ static void create_settings(void)
 
     scroll_content = lv_obj_create(scroll_view);
     lv_obj_set_pos(scroll_content, 0, 0);
-    lv_obj_set_size(scroll_content, 296, 302);
+    lv_obj_set_size(scroll_content, 296, 352);
     lv_obj_set_style_bg_opa(scroll_content, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(scroll_content, 0, 0);
     lv_obj_set_style_pad_all(scroll_content, 0, 0);
@@ -1025,11 +1047,14 @@ static void create_settings(void)
     row = create_settings_row(scroll_content, 100, 0x2BC670, "设备状态", "在线 / 正常", 0x2BC670, NULL);
     lv_obj_add_event_cb(row, settings_to_status_cb, LV_EVENT_CLICKED, NULL);
 
-    row = create_settings_row(scroll_content, 150, 0x3D8BFF, "天气刷新频率", "每15分钟", 0x5F738C, NULL);
+    row = create_settings_row(scroll_content, 150, 0x3D8BFF, "陀螺仪验证", "进入", 0x3D8BFF, NULL);
+    lv_obj_add_event_cb(row, settings_to_gyro_cb, LV_EVENT_CLICKED, NULL);
+
+    row = create_settings_row(scroll_content, 200, 0x3D8BFF, "天气刷新频率", "每15分钟", 0x5F738C, NULL);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
-    row = create_settings_row(scroll_content, 200, 0x3D8BFF, "语言", "简体中文", 0x5F738C, NULL);
+    row = create_settings_row(scroll_content, 250, 0x3D8BFF, "语言", "简体中文", 0x5F738C, NULL);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
-    row = create_settings_row(scroll_content, 250, 0x3D8BFF, "时区", "Asia/Shanghai", 0x5F738C, NULL);
+    row = create_settings_row(scroll_content, 300, 0x3D8BFF, "时区", "Asia/Shanghai", 0x5F738C, NULL);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
 
     scroll_track = lv_obj_create(s_settings);
@@ -1063,6 +1088,68 @@ static void create_settings(void)
 
     btn = create_round_button(footer, 206, 0, 90, 38, 0x15B7D9, "WiFi", &ui_font_sc_14);
     lv_obj_add_event_cb(btn, settings_to_wifi_cb, LV_EVENT_CLICKED, NULL);
+}
+
+static void create_gyro_anchor(lv_obj_t *parent, lv_coord_t x, lv_coord_t y)
+{
+    lv_obj_t *dot = lv_obj_create(parent);
+
+    lv_obj_set_pos(dot, x, y);
+    lv_obj_set_size(dot, 6, 6);
+    lv_obj_set_style_radius(dot, 3, 0);
+    lv_obj_set_style_bg_color(dot, c_hex(0xEAF3FF), 0);
+    lv_obj_set_style_border_color(dot, c_hex(0xCFE4FA), 0);
+    lv_obj_set_style_border_width(dot, 1, 0);
+    lv_obj_set_style_pad_all(dot, 0, 0);
+    lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+static void create_gyro(void)
+{
+    lv_obj_t *header = NULL;
+    lv_obj_t *btn = NULL;
+    lv_obj_t *field = NULL;
+    lv_obj_t *ball = NULL;
+
+    s_gyro = create_base_screen();
+
+    header = lv_obj_create(s_gyro);
+    lv_obj_set_pos(header, 12, 8);
+    lv_obj_set_size(header, 296, 34);
+    lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(header, 0, 0);
+    lv_obj_set_style_pad_all(header, 0, 0);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+
+    btn = create_header_back_text_btn(header, "← 返回", 72);
+    lv_obj_add_event_cb(btn, gyro_back_cb, LV_EVENT_CLICKED, NULL);
+
+    field = lv_obj_create(s_gyro);
+    lv_obj_set_pos(field, 12, 46);
+    lv_obj_set_size(field, 296, 182);
+    lv_obj_set_style_radius(field, 10, 0);
+    lv_obj_set_style_bg_color(field, c_hex(0xFDFEFF), 0);
+    lv_obj_set_style_bg_opa(field, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(field, c_hex(0xD0E5F9), 0);
+    lv_obj_set_style_border_width(field, 1, 0);
+    lv_obj_set_style_pad_all(field, 0, 0);
+    lv_obj_set_style_clip_corner(field, true, 0);
+    lv_obj_clear_flag(field, LV_OBJ_FLAG_SCROLLABLE);
+
+    create_gyro_anchor(field, 8, 8);
+    create_gyro_anchor(field, 282, 8);
+    create_gyro_anchor(field, 8, 168);
+    create_gyro_anchor(field, 282, 168);
+
+    ball = lv_obj_create(field);
+    lv_obj_set_pos(ball, 141, 84);
+    lv_obj_set_size(ball, 14, 14);
+    lv_obj_set_style_radius(ball, 7, 0);
+    lv_obj_set_style_bg_color(ball, c_hex(0x3D8BFF), 0);
+    lv_obj_set_style_bg_opa(ball, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(ball, 0, 0);
+    lv_obj_set_style_pad_all(ball, 0, 0);
+    lv_obj_clear_flag(ball, LV_OBJ_FLAG_SCROLLABLE);
 }
 
 static void create_status(void)
@@ -1340,6 +1427,7 @@ void ui_page_sim_create(void)
     create_ota_progress();
     create_ota_complete();
     create_ota_failed();
+    create_gyro();
     create_wifi();
     sync_dynamic_texts();
     open_page(SIM_PAGE_HOME, LV_SCR_LOAD_ANIM_NONE);

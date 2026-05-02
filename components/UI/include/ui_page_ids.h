@@ -5,6 +5,7 @@ typedef enum {
     UI_PAGE_SETTINGS,
     UI_PAGE_STATUS,
     UI_PAGE_FIRMWARE,
+    UI_PAGE_GYRO,
     UI_PAGE_WIFI,
     UI_PAGE_ABOUT,
     UI_PAGE_MAX,

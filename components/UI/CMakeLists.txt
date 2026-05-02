@@ -10,6 +10,7 @@
         "pages/page_settings.c"
         "pages/page_status.c"
         "pages/page_firmware.c"
+        "pages/page_gyro.c"
         "pages/page_wifi.c"
         "pages/page_about.c"
         "fonts/generated/ui_font_sc_11.c"

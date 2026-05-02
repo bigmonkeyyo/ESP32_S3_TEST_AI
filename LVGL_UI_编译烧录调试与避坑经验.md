@@ -649,3 +649,33 @@ For OTA bugs, always compare these three sources before editing:
 3. Status page `固件版本` label.
 
 If 1 and 2 match but 3 is wrong, this is a UI snapshot/binding problem, not an OTA problem.
+
+## 2026-05-03 Gyro Ball feature notes (V1.3.0)
+
+### What was added
+- New `Gyro Verify` entry in settings, linked to a dedicated gyro page.
+- New runtime ball controller in `main/main.c` using QMI8658A data.
+- New BSP driver integration path: `components/BSP/QMI8658A`.
+
+### Runtime tuning decisions
+- UI startup latency fix:
+  - Start LVGL first.
+  - Move `qmi8658_init()` into independent task.
+- Control model:
+  - Removed constant gravity bias.
+  - Use tilt-driven force only.
+  - Add damping, max speed clamp, and edge bounce.
+- Stability:
+  - Added startup zero calibration window.
+  - Added deadzone for tiny tilt jitter.
+  - Corrected left/right direction by inverting X-axis force.
+
+### Verification checklist used
+1. `idf.py build` passes.
+2. `idf.py -p COM8 -b 460800 flash` passes.
+3. Serial monitor confirms:
+   - `MAIN: Starting LVGL middleware...`
+   - `LVGL_PORT: LVGL started.`
+   - `qmi8658 ...` identify and calibration success
+   - `MAIN: QMI8658A init ok`
+   - Continuous `GYRO:` and `bounce:` logs during motion tests.

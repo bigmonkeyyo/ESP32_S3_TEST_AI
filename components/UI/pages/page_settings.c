@@ -18,6 +18,7 @@ typedef enum {
     SETTINGS_NAV_BACK = 0,
     SETTINGS_NAV_WIFI,
     SETTINGS_NAV_STATUS,
+    SETTINGS_NAV_GYRO,
 } settings_nav_action_t;
 
 static lv_color_t c_hex(uint32_t rgb)
@@ -169,6 +170,9 @@ static void page_settings_nav_async(void *user_data)
         case SETTINGS_NAV_STATUS:
             (void)ui_page_push(UI_PAGE_STATUS, NULL, UI_ANIM_MOVE_LEFT);
             break;
+        case SETTINGS_NAV_GYRO:
+            (void)ui_page_push(UI_PAGE_GYRO, NULL, UI_ANIM_MOVE_LEFT);
+            break;
         default:
             break;
     }
@@ -213,6 +217,15 @@ static void page_settings_open_status_cb(lv_event_t *e)
     }
 
     page_settings_schedule_nav(SETTINGS_NAV_STATUS);
+}
+
+static void page_settings_open_gyro_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
+        return;
+    }
+
+    page_settings_schedule_nav(SETTINGS_NAV_GYRO);
 }
 
 static lv_obj_t *page_settings_create(void)
@@ -287,7 +300,7 @@ static lv_obj_t *page_settings_create(void)
 
     scroll_content = lv_obj_create(scroll_view);
     lv_obj_set_pos(scroll_content, 0, 0);
-    lv_obj_set_size(scroll_content, 296, 302);
+    lv_obj_set_size(scroll_content, 296, 352);
     lv_obj_set_style_bg_opa(scroll_content, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(scroll_content, 0, 0);
     lv_obj_set_style_pad_all(scroll_content, 0, 0);
@@ -302,11 +315,14 @@ static lv_obj_t *page_settings_create(void)
     row = create_settings_row(scroll_content, 100, 0x2BC670, "设备状态", "在线 / 正常", 0x2BC670, NULL);
     lv_obj_add_event_cb(row, page_settings_open_status_cb, LV_EVENT_CLICKED, NULL);
 
-    row = create_settings_row(scroll_content, 150, 0x3D8BFF, "天气刷新频率", "每15分钟", 0x5F738C, NULL);
+    row = create_settings_row(scroll_content, 150, 0x3D8BFF, "Gyro Verify", "Enter", 0x3D8BFF, NULL);
+    lv_obj_add_event_cb(row, page_settings_open_gyro_cb, LV_EVENT_CLICKED, NULL);
+
+    row = create_settings_row(scroll_content, 200, 0x3D8BFF, "天气刷新频率", "每15分钟", 0x5F738C, NULL);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
-    row = create_settings_row(scroll_content, 200, 0x3D8BFF, "语言", "简体中文", 0x5F738C, NULL);
+    row = create_settings_row(scroll_content, 250, 0x3D8BFF, "语言", "简体中文", 0x5F738C, NULL);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
-    row = create_settings_row(scroll_content, 250, 0x3D8BFF, "时区", "Asia/Shanghai", 0x5F738C, NULL);
+    row = create_settings_row(scroll_content, 300, 0x3D8BFF, "时区", "Asia/Shanghai", 0x5F738C, NULL);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
 
     scroll_track = lv_obj_create(s_screen);

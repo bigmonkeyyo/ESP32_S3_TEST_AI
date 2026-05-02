@@ -3,6 +3,7 @@
 
 #include "page_about.h"
 #include "page_firmware.h"
+#include "page_gyro.h"
 #include "page_home.h"
 #include "page_settings.h"
 #include "page_status.h"
@@ -13,6 +14,7 @@ static const ui_page_t *s_pages[UI_PAGE_MAX] = {
     [UI_PAGE_SETTINGS] = &g_page_settings,
     [UI_PAGE_STATUS] = &g_page_status,
     [UI_PAGE_FIRMWARE] = &g_page_firmware,
+    [UI_PAGE_GYRO] = &g_page_gyro,
     [UI_PAGE_WIFI] = &g_page_wifi,
     [UI_PAGE_ABOUT] = &g_page_about,
 };

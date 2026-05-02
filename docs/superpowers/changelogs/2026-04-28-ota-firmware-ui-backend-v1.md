@@ -114,3 +114,30 @@ APP_OTA: version reported 1.3.0
 - Move OneNET sensitive keys out of committed `sdkconfig` before public sharing.
 - Add a dedicated failure-test pass for bad network, bad MD5, and no task states.
 - If the package list changes on OneNET, create a new higher version package because OneNET will not re-upgrade the same current version to the same target version indefinitely.
+
+---
+
+## Incremental Update - 2026-05-03 (V1.3.0 Gyro Ball)
+
+### Scope
+
+- Added new `Gyro Verify` entry in settings navigation and routed to new `UI_PAGE_GYRO`.
+- Added new gyro page (`components/UI/pages/page_gyro.c/.h`) and simulator gyro page route.
+- Integrated QMI8658A driver into BSP (`components/BSP/QMI8658A/*`, CMake include/source wiring).
+- Added runtime gyro task in `main/main.c` to drive LVGL ball position with damping and boundary bounce.
+
+### UX/Runtime Adjustments
+
+- Fixed delayed first-screen issue by starting LVGL first and moving QMI8658A init into async task.
+- Removed artificial gravity bias so motion depends on tilt only.
+- Added startup zero calibration and tilt deadzone to reduce drift and sticky edge behavior.
+- Fixed left/right direction inversion by reversing X-axis force sign.
+
+### Validation Snapshot
+
+- Build: pass (`idf.py build`).
+- Flash: pass on `COM8` at `460800`.
+- Serial verification:
+  - LVGL starts before IMU init completion.
+  - QMI8658A identify/calibration success logs present.
+  - Continuous `GYRO` output and bounce logs present during movement.

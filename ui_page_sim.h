@@ -10,6 +10,7 @@ typedef enum {
     UI_PAGE_SIM_OTA_PROGRESS,
     UI_PAGE_SIM_OTA_COMPLETE,
     UI_PAGE_SIM_OTA_FAILED,
+    UI_PAGE_SIM_GYRO,
     UI_PAGE_SIM_WIFI,
 } ui_page_sim_id_t;
 
