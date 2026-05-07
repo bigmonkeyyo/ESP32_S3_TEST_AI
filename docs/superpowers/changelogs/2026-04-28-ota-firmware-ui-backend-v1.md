@@ -141,3 +141,32 @@ APP_OTA: version reported 1.3.0
   - LVGL starts before IMU init completion.
   - QMI8658A identify/calibration success logs present.
   - Continuous `GYRO` output and bounce logs present during movement.
+
+---
+
+## Incremental Update - 2026-05-07 (V1.3.1 BLE + Web Gyro Calibration)
+
+### Scope
+
+- Added BLE realtime gyro streaming module on device side (`components/GyroBle`).
+- Extended IMU pipeline to publish posture and quaternion-related data for web visualization.
+- Added Web Bluetooth 3D viewer first version (`web/gyro_ble_viewer.html`), including:
+  - device connection/disconnection and stream control
+  - realtime posture display (`roll/pitch/yaw`)
+  - on-page three-pose calibration flow
+  - status, FPS, timestamp, and ball state panel
+
+### Runtime/UX Notes
+
+- Current web visualization path has been rolled back to non-quaternion render mapping to keep interaction behavior stable.
+- Device model orientation has been corrected to match:
+  - screen facing up on flat placement
+  - physical slot/notch facing direction aligned with rendered model
+- Calibration matrix now disables cross-coupling terms (`m12/m21`) to reduce left-right tilt causing unintended in-out tilt.
+
+### Validation Snapshot
+
+- Firmware build/flash: completed in this iteration and BLE stream path available on board.
+- Web Bluetooth connection: verified with Chrome/Edge flow.
+- Realtime updates: posture and state panel refresh continuously after BLE connect.
+- Regression checks: existing LVGL main pages remain available after BLE feature integration.

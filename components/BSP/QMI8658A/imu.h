@@ -30,5 +30,6 @@
 
 
 void imu_get_eulerian_angles(float acc[3], float gyro[3], float *rpy, float dt) ; /* 鑾峰彇娆ф媺瑙?*/
+void imu_get_quaternion(float quat_wxyz[4]); /* 鑾峰彇鍥涘厓鏁帮紙w,x,y,z锛?*/
 
 #endif

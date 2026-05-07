@@ -14,6 +14,7 @@
 #include <math.h>
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "iic.h"
 #include "xl9555.h"
@@ -22,6 +23,7 @@
 #include "qmi8658a.h"
 #include "imu.h"
 #include "page_gyro.h"
+#include "gyro_ble.h"
 
 
 static const char *TAG = "MAIN";
@@ -104,8 +106,26 @@ static void gyro_monitor_task(void *arg)
         bool hit_x = false;
         bool hit_y = false;
 
+        if (gyro_ble_take_recalibrate_request())
+        {
+            zero_roll = 0.0f;
+            zero_pitch = 0.0f;
+            zero_roll_sum = 0.0f;
+            zero_pitch_sum = 0.0f;
+            zero_count = 0;
+            zero_ready = false;
+            ball_x = 0.0f;
+            ball_y = 0.0f;
+            ball_vx = 0.0f;
+            ball_vy = 0.0f;
+            page_gyro_set_ball_norm(0.0f, 0.0f);
+            ESP_LOGI(GYRO_TAG, "zero recalibration requested by BLE");
+        }
+
         qmi8658_read_xyz(acc, gyro);
         imu_get_eulerian_angles(acc, gyro, rpy, dt_s);
+        float quat[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+        imu_get_quaternion(quat);
         acc_norm = sqrtf((acc[0] * acc[0]) + (acc[1] * acc[1]) + (acc[2] * acc[2]));
         if (acc_norm < 0.2f) {
             vTaskDelay(pdMS_TO_TICKS(GYRO_SAMPLE_MS));
@@ -213,6 +233,29 @@ static void gyro_monitor_task(void *arg)
                      ball_x, ball_y, ball_vx, ball_vy);
         }
 
+        gyro_ble_sample_t ble_sample = {
+            .timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000ULL),
+            .roll_deg = rpy[0],
+            .pitch_deg = rpy[1],
+            .yaw_deg = rpy[2],
+            .quat_w = quat[0],
+            .quat_x = quat[1],
+            .quat_y = quat[2],
+            .quat_z = quat[3],
+            .ball_x_norm = ball_x,
+            .ball_y_norm = ball_y,
+            .ball_vx = ball_vx,
+            .ball_vy = ball_vy,
+            .acc_x = acc[0],
+            .acc_y = acc[1],
+            .acc_z = acc[2],
+            .gyro_x = gyro[0],
+            .gyro_y = gyro[1],
+            .gyro_z = gyro[2],
+            .zero_ready = zero_ready,
+        };
+        gyro_ble_publish_sample(&ble_sample);
+
         vTaskDelay(pdMS_TO_TICKS(GYRO_SAMPLE_MS));
     }
 }
@@ -230,6 +273,7 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+    ESP_ERROR_CHECK(gyro_ble_start());
 
     led_init();
     i2c0_master = iic_init(I2C_NUM_0); /* 鍒濆鍖?IIC0 */

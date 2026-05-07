@@ -183,6 +183,17 @@ void imu_get_eulerian_angles(float acc[3], float gyro[3], float *rpy, float dt) 
     }
 }
 
+void imu_get_quaternion(float quat_wxyz[4])
+{
+    if (quat_wxyz == NULL) {
+        return;
+    }
+    quat_wxyz[0] = q0;
+    quat_wxyz[1] = q1;
+    quat_wxyz[2] = q2;
+    quat_wxyz[3] = q3;
+}
+
 /**
  * @brief   开方函数
  * @param   x : 待开方的值
