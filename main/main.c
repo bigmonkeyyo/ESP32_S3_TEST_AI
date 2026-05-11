@@ -20,6 +20,7 @@
 #include "xl9555.h"
 #include "led.h"
 #include "lvgl_port.h"
+#include "app_backend.h"
 #include "qmi8658a.h"
 #include "imu.h"
 #include "page_gyro.h"
@@ -106,7 +107,7 @@ static void gyro_monitor_task(void *arg)
         bool hit_x = false;
         bool hit_y = false;
 
-        if (gyro_ble_take_recalibrate_request())
+        if (app_backend_ble_is_enabled() && gyro_ble_take_recalibrate_request())
         {
             zero_roll = 0.0f;
             zero_pitch = 0.0f;
@@ -233,28 +234,30 @@ static void gyro_monitor_task(void *arg)
                      ball_x, ball_y, ball_vx, ball_vy);
         }
 
-        gyro_ble_sample_t ble_sample = {
-            .timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000ULL),
-            .roll_deg = rpy[0],
-            .pitch_deg = rpy[1],
-            .yaw_deg = rpy[2],
-            .quat_w = quat[0],
-            .quat_x = quat[1],
-            .quat_y = quat[2],
-            .quat_z = quat[3],
-            .ball_x_norm = ball_x,
-            .ball_y_norm = ball_y,
-            .ball_vx = ball_vx,
-            .ball_vy = ball_vy,
-            .acc_x = acc[0],
-            .acc_y = acc[1],
-            .acc_z = acc[2],
-            .gyro_x = gyro[0],
-            .gyro_y = gyro[1],
-            .gyro_z = gyro[2],
-            .zero_ready = zero_ready,
-        };
-        gyro_ble_publish_sample(&ble_sample);
+        if (app_backend_ble_is_enabled()) {
+            gyro_ble_sample_t ble_sample = {
+                .timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000ULL),
+                .roll_deg = rpy[0],
+                .pitch_deg = rpy[1],
+                .yaw_deg = rpy[2],
+                .quat_w = quat[0],
+                .quat_x = quat[1],
+                .quat_y = quat[2],
+                .quat_z = quat[3],
+                .ball_x_norm = ball_x,
+                .ball_y_norm = ball_y,
+                .ball_vx = ball_vx,
+                .ball_vy = ball_vy,
+                .acc_x = acc[0],
+                .acc_y = acc[1],
+                .acc_z = acc[2],
+                .gyro_x = gyro[0],
+                .gyro_y = gyro[1],
+                .gyro_z = gyro[2],
+                .zero_ready = zero_ready,
+            };
+            gyro_ble_publish_sample(&ble_sample);
+        }
 
         vTaskDelay(pdMS_TO_TICKS(GYRO_SAMPLE_MS));
     }
@@ -273,8 +276,6 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-    ESP_ERROR_CHECK(gyro_ble_start());
-
     led_init();
     i2c0_master = iic_init(I2C_NUM_0); /* 鍒濆鍖?IIC0 */
     xl9555_init(i2c0_master);           /* 鍒濆鍖?IO 鎵╁睍鑺墖 */

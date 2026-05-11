@@ -10,16 +10,18 @@
 #include "esp_app_desc.h"
 #include "esp_ota_ops.h"
 #include "esp_check.h"
-#include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
+#include "esp_tls.h"
 #include "app_backend_internal.h"
 #include "backend_store.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/md.h"
+#include "mbedtls/x509_crt.h"
 
 #if CONFIG_APP_ONENET_OTA_ENABLE
 #define ONENET_OTA_BASE_URL CONFIG_APP_ONENET_OTA_BASE_URL
@@ -56,6 +58,7 @@
 #define ONENET_OTA_TASK_STACK         8192
 #define ONENET_OTA_DOWNLOAD_TASK_STACK 8192
 #define ONENET_OTA_TASK_PRIORITY      4
+#define ONENET_OTA_CHECK_COOLDOWN_MS  5000
 
 typedef struct {
     char *buf;
@@ -77,6 +80,154 @@ static const char *TAG = "APP_OTA";
 static bool s_check_in_progress;
 static bool s_download_started;
 static ota_pending_task_t s_pending_task;
+static int64_t s_last_check_start_us;
+
+static const char ONENET_OTA_CA_CERT_PEM[] =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIFxjCCBK6gAwIBAgIQDwa7CTBhSCZ/yhtxwduAfTANBgkqhkiG9w0BAQsFADBhMQswCQYDVQQG\n"
+    "EwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3d3cuZGlnaWNlcnQuY29tMSAw\n"
+    "HgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBHMjAeFw0yMjEyMTUwMDAwMDBaFw0zMjEyMTQy\n"
+    "MzU5NTlaMFsxCzAJBgNVBAYTAlVTMRcwFQYDVQQKEw5EaWdpQ2VydCwgSW5jLjEzMDEGA1UEAxMq\n"
+    "R2VvVHJ1c3QgRzIgVExTIENOIFJTQTQwOTYgU0hBMjU2IDIwMjIgQ0ExMIICIjANBgkqhkiG9w0B\n"
+    "AQEFAAOCAg8AMIICCgKCAgEAn1dxOo4OzYa4O1EJd0nhFI5QB/kXAJTHRI6C1J2Gz86BGe9+DD8R\n"
+    "4vexG7/QnUvV+5887o+G4enlkDwJV1Pehq4i0n+X6VKIPg5cThCx6/o03bUkLWld7slhi3Hli/Ma\n"
+    "osZZuytdU1uCzQlGpaLB2TiTZbDImiVaykdfwl8V6AXP0Ab4wIcvPggl4qlwyPsBY6NODbP884Bm\n"
+    "L1ntdXfzecGst30FnAtm4w+PTo0I1T3FITYXaNuIJnKonD1xXaN4Ar/rvcpKpntxVyZQ2T1Lb7vl\n"
+    "fYISqNF+1ugpTzKnI1z7xV7tSqXd2vs6Csy6yFN+QLWwMnGWuQkvrO1m+F7V85S9ECpbqn9qNtKl\n"
+    "8gIQ7JeZBmBdLroW+4j1PDzBWmSWKB+gvRubVSTuoDR3VCtlI4G/Uh+ObF4UStbhKjr1SNCWJcrB\n"
+    "1oF+wWBl8Bvozm4xflyyGDY47KCP/Fn9X5GHDNLQA9R0zqDKRumipp1UXswFuzH0I+gOuqSdZSsY\n"
+    "ID9XSVq6adcJ3rIMAcTuODcrPrJssOFKGFUbmY/VxbxMgYHI/07Zfdxoa+q0osWpofbMhLPZz9Uu\n"
+    "JFBCLsjgSckkSU02/4itmLm9e3lt6E/4q9McMCaS8+qrLWKG9wQtviC8zGynEXpxjEQE8WyrfeYK\n"
+    "yXwZFCPB4rpTw1joJmGFeLUCAwEAAaOCAX4wggF6MBIGA1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0O\n"
+    "BBYEFEFOjmmd9G4l7HgUHH7XzR2Zz/lrMB8GA1UdIwQYMBaAFE4iVCAYlebjbuYP+vq5Eu0GF485\n"
+    "MA4GA1UdDwEB/wQEAwIBhjAdBgNVHSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwdAYIKwYBBQUH\n"
+    "AQEEaDBmMCMGCCsGAQUFBzABhhdodHRwOi8vb2NzcC5kaWdpY2VydC5jbjA/BggrBgEFBQcwAoYz\n"
+    "aHR0cDovL2NhY2VydHMuZGlnaWNlcnQuY24vRGlnaUNlcnRHbG9iYWxSb290RzIuY3J0MEAGA1Ud\n"
+    "HwQ5MDcwNaAzoDGGL2h0dHA6Ly9jcmwuZGlnaWNlcnQuY24vRGlnaUNlcnRHbG9iYWxSb290RzIu\n"
+    "Y3JsMD0GA1UdIAQ2MDQwCwYJYIZIAYb9bAIBMAcGBWeBDAEBMAgGBmeBDAECATAIBgZngQwBAgIw\n"
+    "CAYGZ4EMAQIDMA0GCSqGSIb3DQEBCwUAA4IBAQAkpDVI+nCKnAEEpDfldytHXUYOr2ysaGeboE3d\n"
+    "1KAN4Gt+eioRvgNdmDKbVFCYY0C6ErIXIvSGXafsprU2dclka/kmH+9U4q3v5Acx6KwcnEuYLN0Q\n"
+    "OtrlQ9s3Z4IbIzdYUv8IauXC27a3x99x2WMVxNu1KGJy0r1Z+Xya1adf9/e1LFj1CGdq9HfQ/HFW\n"
+    "P2khzxQZ4u62sOHuZdPgtNidFOhQLC+25cNsPgqsaCrGLbSjzni7VN7NhAbTsLhA1oz41vHHB+q4\n"
+    "ZzNlC01elmPBOtupe2HM/lqMA/J/nTxc718THdxpszFllAET1/lFEolnqihpUFPaPjRwU7yZIseS\n"
+    "-----END CERTIFICATE-----\n"
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIDrzCCApegAwIBAgIQCDvgVpBCRrGhdWrJWZHHSjANBgkqhkiG9w0BAQUFADBh\n"
+    "MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3\n"
+    "d3cuZGlnaWNlcnQuY29tMSAwHgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBD\n"
+    "QTAeFw0wNjExMTAwMDAwMDBaFw0zMTExMTAwMDAwMDBaMGExCzAJBgNVBAYTAlVT\n"
+    "MRUwEwYDVQQKEwxEaWdpQ2VydCBJbmMxGTAXBgNVBAsTEHd3dy5kaWdpY2VydC5j\n"
+    "b20xIDAeBgNVBAMTF0RpZ2lDZXJ0IEdsb2JhbCBSb290IENBMIIBIjANBgkqhkiG\n"
+    "9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4jvhEXLeqKTTo1eqUKKPC3eQyaKl7hLOllsB\n"
+    "CSDMAZOnTjC3U/dDxGkAV53ijSLdhwZAAIEJzs4bg7/fzTtxRuLWZscFs3YnFo97\n"
+    "nh6Vfe63SKMI2tavegw5BmV/Sl0fvBf4q77uKNd0f3p4mVmFaG5cIzJLv07A6Fpt\n"
+    "43C/dxC//AH2hdmoRBBYMql1GNXRor5H4idq9Joz+EkIYIvUX7Q6hL+hqkpMfT7P\n"
+    "T19sdl6gSzeRntwi5m3OFBqOasv+zbMUZBfHWymeMr/y7vrTC0LUq7dBMtoM1O/4\n"
+    "gdW7jVg/tRvoSSiicNoxBN33shbyTApOB6jtSj1etX+jkMOvJwIDAQABo2MwYTAO\n"
+    "BgNVHQ8BAf8EBAMCAYYwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUA95QNVbR\n"
+    "TLtm8KPiGxvDl7I90VUwHwYDVR0jBBgwFoAUA95QNVbRTLtm8KPiGxvDl7I90VUw\n"
+    "DQYJKoZIhvcNAQEFBQADggEBAMucN6pIExIK+t1EnE9SsPTfrgT1eXkIoyQY/Esr\n"
+    "hMAtudXH/vTBH1jLuG2cenTnmCmrEbXjcKChzUyImZOMkXDiqw8cvpOp/2PV5Adg\n"
+    "06O/nVsJ8dWO41P0jmP6P6fbtGbfYmbW0W5BjfIttep3Sp+dWOIrWcBAI+0tKIJF\n"
+    "PnlUkiaY4IBIqDfv8NZ5YBberOgOzW6sRBc4L0na4UU+Krk2U886UAb3LujEV0ls\n"
+    "YSEY1QSteDwsOoBrp+uvFRTp2InBuThs4pFsiv9kuXclVzDAGySj4dzp30d8tbQk\n"
+    "CAUw7C29C79Fv1C5qfPrmAESrciIxpg0X40KPMbp1ZWVbd4=\n"
+    "-----END CERTIFICATE-----\n"
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIDjjCCAnagAwIBAgIQAzrx5qcRqaC7KGSxHQn65TANBgkqhkiG9w0BAQsFADBh\n"
+    "MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3\n"
+    "d3cuZGlnaWNlcnQuY29tMSAwHgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBH\n"
+    "MjAeFw0xMzA4MDExMjAwMDBaFw0zODAxMTUxMjAwMDBaMGExCzAJBgNVBAYTAlVT\n"
+    "MRUwEwYDVQQKEwxEaWdpQ2VydCBJbmMxGTAXBgNVBAsTEHd3dy5kaWdpY2VydC5j\n"
+    "b20xIDAeBgNVBAMTF0RpZ2lDZXJ0IEdsb2JhbCBSb290IEcyMIIBIjANBgkqhkiG\n"
+    "9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuzfNNNx7a8myaJCtSnX/RrohCgiN9RlUyfuI\n"
+    "2/Ou8jqJkTx65qsGGmvPrC3oXgkkRLpimn7Wo6h+4FR1IAWsULecYxpsMNzaHxmx\n"
+    "1x7e/dfgy5SDN67sH0NO3Xss0r0upS/kqbitOtSZpLYl6ZtrAGCSYP9PIUkY92eQ\n"
+    "q2EGnI/yuum06ZIya7XzV+hdG82MHauVBJVJ8zUtluNJbd134/tJS7SsVQepj5Wz\n"
+    "tCO7TG1F8PapspUwtP1MVYwnSlcUfIKdzXOS0xZKBgyMUNGPHgm+F6HmIcr9g+UQ\n"
+    "vIOlCsRnKPZzFBQ9RnbDhxSJITRNrw9FDKZJobq7nMWxM4MphQIDAQABo0IwQDAP\n"
+    "BgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBhjAdBgNVHQ4EFgQUTiJUIBiV\n"
+    "5uNu5g/6+rkS7QYXjzkwDQYJKoZIhvcNAQELBQADggEBAGBnKJRvDkhj6zHd6mcY\n"
+    "1Yl9PMWLSn/pvtsrF9+wX3N3KjITOYFnQoQj8kVnNeyIv/iPsGEMNKSuIEyExtv4\n"
+    "NeF22d+mQrvHRAiGfzZ0JFrabA0UWTW98kndth/Jsw1HKj2ZL7tcu7XUIOGZX1NG\n"
+    "Fdtom/DzMNU+MeKNhJ7jitralj41E6Vf8PlwUHBHQRFXGU7Aj64GxJUTFy8bJZ91\n"
+    "8rGOmaFvE7FBcf6IKshPECBV1/MUReXgRPTqh5Uykw7+U0b6LJ3/iyK5S9kJRaTe\n"
+    "pLiaWN0bfVKfjllDiIGknibVb63dDcY3fe0Dkhvld1927jyNxF1WW6LZZm6zNTfl\n"
+    "MrY=\n"
+    "-----END CERTIFICATE-----\n"
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIICPzCCAcWgAwIBAgIQBVVWvPJepDU1w6QP1atFcjAKBggqhkjOPQQDAzBhMQsw\n"
+    "CQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3d3cu\n"
+    "ZGlnaWNlcnQuY29tMSAwHgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBHMzAe\n"
+    "Fw0xMzA4MDExMjAwMDBaFw0zODAxMTUxMjAwMDBaMGExCzAJBgNVBAYTAlVTMRUw\n"
+    "EwYDVQQKEwxEaWdpQ2VydCBJbmMxGTAXBgNVBAsTEHd3dy5kaWdpY2VydC5jb20x\n"
+    "IDAeBgNVBAMTF0RpZ2lDZXJ0IEdsb2JhbCBSb290IEczMHYwEAYHKoZIzj0CAQYF\n"
+    "K4EEACIDYgAE3afZu4q4C/sLfyHS8L6+c/MzXRq8NOrexpu80JX28MzQC7phW1FG\n"
+    "fp4tn+6OYwwX7Adw9c+ELkCDnOg/QW07rdOkFFk2eJ0DQ+4QE2xy3q6Ip6FrtUPO\n"
+    "Z9wj/wMco+I+o0IwQDAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBhjAd\n"
+    "BgNVHQ4EFgQUs9tIpPmhxdiuNkHMEWNpYim8S8YwCgYIKoZIzj0EAwMDaAAwZQIx\n"
+    "AK288mw/EkrRLTnDCgmXc/SINoyIJ7vmiI1Qhadj+Z4y3maTD/HMsQmP3Wyr+mt/\n"
+    "oAIwOWZbwmSNuJ5Q3KjVSaLtx9zRSX8XAbjIho9OjIgrqJqpisXRAL34VOKa5Vt8\n"
+    "sycX\n"
+    "-----END CERTIFICATE-----\n"
+    "-----BEGIN CERTIFICATE-----\n"
+    "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\n"
+    "-----END CERTIFICATE-----\n"
+    ;
+
+
+static void ota_log_tls_error_flags(esp_tls_error_handle_t error_handle, const char *where)
+{
+    int tls_code = 0;
+    int tls_flags = 0;
+    esp_err_t err = ESP_OK;
+
+    if (error_handle == NULL) {
+        ESP_LOGW(TAG, "%s tls error handle is NULL", where);
+        return;
+    }
+    err = esp_tls_get_and_clear_last_error(error_handle, &tls_code, &tls_flags);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "%s get tls error failed: %s (tls_code=0x%X tls_flags=0x%X)",
+                 where, esp_err_to_name(err), tls_code, tls_flags);
+    } else if ((tls_code == 0) && (tls_flags == 0)) {
+        return;
+    }
+    ESP_LOGW(TAG, "%s tls_code=0x%X tls_flags=0x%X", where, tls_code, tls_flags);
+    if (tls_flags != 0) {
+        char verify_info[256] = {0};
+        mbedtls_x509_crt_verify_info(verify_info, sizeof(verify_info), "  ! ", (uint32_t)tls_flags);
+        ESP_LOGW(TAG, "TLS verify flags:\n%s", verify_info);
+    }
+}
 
 static bool ota_service_configured(void)
 {
@@ -184,7 +335,16 @@ static esp_err_t ota_http_event_cb(esp_http_client_event_t *evt)
 {
     ota_http_buf_t *capture = NULL;
 
-    if ((evt == NULL) || (evt->event_id != HTTP_EVENT_ON_DATA) || (evt->user_data == NULL)) {
+    if (evt == NULL) {
+        return ESP_OK;
+    }
+
+    if ((evt->event_id == HTTP_EVENT_ERROR) || (evt->event_id == HTTP_EVENT_DISCONNECTED)) {
+        ota_log_tls_error_flags((esp_tls_error_handle_t)evt->data, "OTA HTTP event");
+        return ESP_OK;
+    }
+
+    if ((evt->event_id != HTTP_EVENT_ON_DATA) || (evt->user_data == NULL)) {
         return ESP_OK;
     }
 
@@ -224,7 +384,7 @@ static esp_err_t ota_http_json_request(const char *url,
         .event_handler = ota_http_event_cb,
         .user_data = &capture,
         .timeout_ms = 10000,
-        .crt_bundle_attach = esp_crt_bundle_attach,
+        .cert_pem = ONENET_OTA_CA_CERT_PEM,
     };
     esp_http_client_handle_t client = NULL;
     esp_err_t err;
@@ -500,7 +660,8 @@ static esp_err_t ota_http_download_to_partition(const ota_pending_task_t *task)
         .url = url,
         .method = HTTP_METHOD_GET,
         .timeout_ms = 15000,
-        .crt_bundle_attach = esp_crt_bundle_attach,
+        .cert_pem = ONENET_OTA_CA_CERT_PEM,
+        .event_handler = ota_http_event_cb,
         .keep_alive_enable = true,
     };
 
@@ -726,12 +887,19 @@ esp_err_t ota_service_check_update(void)
     ESP_LOGI(TAG, "disabled");
     return ESP_OK;
 #endif
+    int64_t now_us = esp_timer_get_time();
 
     if (s_check_in_progress) {
         return ESP_OK;
     }
+    if ((s_last_check_start_us > 0) &&
+        ((now_us - s_last_check_start_us) < ((int64_t)ONENET_OTA_CHECK_COOLDOWN_MS * 1000LL))) {
+        ESP_LOGI(TAG, "check request ignored: cooldown");
+        return ESP_OK;
+    }
 
     s_check_in_progress = true;
+    s_last_check_start_us = now_us;
     if (xTaskCreate(ota_service_task, "app_ota", ONENET_OTA_TASK_STACK, NULL,
                     ONENET_OTA_TASK_PRIORITY, NULL) != pdPASS) {
         s_check_in_progress = false;

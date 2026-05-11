@@ -7,6 +7,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 
 #include "app_backend_internal.h"
@@ -16,18 +17,23 @@
 #include "time_service.h"
 #include "weather_service.h"
 #include "wifi_service.h"
+#include "gyro_ble.h"
 
 #define APP_BACKEND_QUEUE_LEN      8
-#define APP_BACKEND_TASK_STACK     16384
+#define APP_BACKEND_TASK_STACK     8192
 #define APP_BACKEND_TASK_PRIORITY  5
+#define APP_BACKEND_ONLINE_TASK_STACK 8192
+#define APP_BACKEND_ONLINE_TASK_PRIORITY 4
 #define APP_BACKEND_ONLINE_RETRY_MS 30000
 #define APP_BACKEND_IP_READY_SETTLE_MS 1500
+#define APP_BACKEND_OTA_CHECK_DEBOUNCE_MS 1200
 
 typedef struct {
     app_backend_cmd_id_t id;
     char ssid[APP_BACKEND_SSID_MAX_LEN + 1];
     char password[APP_BACKEND_PASSWORD_MAX_LEN + 1];
     bool forget_saved;
+    bool ble_enabled;
 } app_backend_cmd_t;
 
 static const char *TAG = "APP_BACKEND";
@@ -37,8 +43,21 @@ static TaskHandle_t s_task;
 static bool s_started;
 static app_backend_update_cb_t s_update_cb;
 static void *s_update_user_ctx;
-static bool s_online_retry_pending;
-static TickType_t s_next_online_retry_tick;
+static volatile bool s_online_retry_pending;
+static volatile TickType_t s_next_online_retry_tick;
+static volatile bool s_ip_ready_task_running;
+static bool s_ble_enabled;
+static TickType_t s_last_ota_check_post_tick;
+
+static void app_backend_log_heap(const char *label)
+{
+    ESP_LOGI(TAG, "heap %s: internal free=%u largest=%u psram free=%u largest=%u",
+             label,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+}
 
 static void app_backend_schedule_online_retry(uint32_t delay_ms)
 {
@@ -67,6 +86,28 @@ static void app_backend_update_time_snapshot(void)
     backend_store_set_time(now_time, uptime, NULL);
 }
 
+static void app_backend_prepare_ble_stack(void)
+{
+    esp_err_t err;
+
+    if (s_ble_enabled) {
+        return;
+    }
+
+    app_backend_log_heap("before_ble_prepare");
+    (void)gyro_ble_set_streaming_enabled(false);
+    (void)gyro_ble_set_advertising_enabled(false);
+    err = gyro_ble_start();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "BLE stack prepare failed: %s", esp_err_to_name(err));
+        app_backend_log_heap("ble_prepare_failed");
+        return;
+    }
+
+    ESP_LOGI(TAG, "BLE stack prepared");
+    app_backend_log_heap("after_ble_prepare");
+}
+
 static void app_backend_refresh_weather_with_diag(void)
 {
     app_backend_weather_t weather = {0};
@@ -87,10 +128,13 @@ static void app_backend_handle_ip_ready(void)
     char uptime[APP_BACKEND_UPTIME_MAX_LEN] = {0};
     char last_sync[APP_BACKEND_TIME_MAX_LEN] = {0};
 
+    app_backend_prepare_ble_stack();
     vTaskDelay(pdMS_TO_TICKS(APP_BACKEND_IP_READY_SETTLE_MS));
     time_service_format_uptime(uptime, sizeof(uptime));
 
+    app_backend_log_heap("before_mqtt_start");
     (void)mqtt_service_start();
+    app_backend_log_heap("after_mqtt_start");
 
     if (time_service_sync(now_time, sizeof(now_time), last_sync, sizeof(last_sync)) == ESP_OK) {
         backend_store_set_time(now_time, uptime, last_sync);
@@ -107,6 +151,62 @@ static void app_backend_handle_ip_ready(void)
     }
 
     app_backend_refresh_weather_with_diag();
+}
+
+static void app_backend_ip_ready_task(void *arg)
+{
+    (void)arg;
+    app_backend_handle_ip_ready();
+    s_ip_ready_task_running = false;
+    vTaskDelete(NULL);
+}
+
+static esp_err_t app_backend_start_ip_ready_task(void)
+{
+    if (s_ip_ready_task_running) {
+        ESP_LOGI(TAG, "online sync already running");
+        return ESP_OK;
+    }
+
+    s_ip_ready_task_running = true;
+    if (xTaskCreate(app_backend_ip_ready_task, "app_online_sync",
+                    APP_BACKEND_ONLINE_TASK_STACK, NULL,
+                    APP_BACKEND_ONLINE_TASK_PRIORITY, NULL) != pdPASS) {
+        s_ip_ready_task_running = false;
+        ESP_LOGE(TAG, "online sync task create failed");
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGI(TAG, "online sync task started");
+    return ESP_OK;
+}
+
+static void app_backend_set_ble_enabled(bool enabled)
+{
+    if (enabled == s_ble_enabled) {
+        return;
+    }
+
+    if (enabled) {
+        esp_err_t err = gyro_ble_start();
+        if (err != ESP_OK) {
+            backend_store_set_message("BLE start failed");
+            app_backend_notify_changed();
+            ESP_LOGE(TAG, "gyro_ble_start failed: %s", esp_err_to_name(err));
+            return;
+        }
+        (void)gyro_ble_set_streaming_enabled(true);
+        (void)gyro_ble_set_advertising_enabled(true);
+        s_ble_enabled = true;
+        backend_store_set_ble_enabled(true, "BLE enabled");
+    } else {
+        (void)gyro_ble_set_streaming_enabled(false);
+        (void)gyro_ble_set_advertising_enabled(false);
+        s_ble_enabled = false;
+        backend_store_set_ble_enabled(false, "BLE disabled");
+    }
+
+    app_backend_notify_changed();
 }
 
 static void app_backend_task(void *arg)
@@ -133,7 +233,7 @@ static void app_backend_task(void *arg)
                 app_backend_refresh_weather_with_diag();
                 break;
             case APP_BACKEND_CMD_IP_READY:
-                app_backend_handle_ip_ready();
+                (void)app_backend_start_ip_ready_task();
                 break;
             case APP_BACKEND_CMD_OTA_CHECK:
                 (void)ota_service_check_update();
@@ -143,6 +243,9 @@ static void app_backend_task(void *arg)
                 break;
             case APP_BACKEND_CMD_OTA_RESTART:
                 (void)ota_service_restart_now();
+                break;
+            case APP_BACKEND_CMD_BLE_SET_ENABLED:
+                app_backend_set_ble_enabled(cmd.ble_enabled);
                 break;
             default:
                 ESP_LOGW(TAG, "unknown cmd=%d", (int)cmd.id);
@@ -161,7 +264,7 @@ static void app_backend_task(void *arg)
             s_online_retry_pending = false;
             if (app_backend_wifi_is_connected()) {
                 ESP_LOGI(TAG, "online sync retry");
-                app_backend_handle_ip_ready();
+                (void)app_backend_start_ip_ready_task();
             }
         }
     }
@@ -231,6 +334,8 @@ esp_err_t app_backend_start(void)
     }
 
     s_started = true;
+    s_ble_enabled = false;
+    backend_store_set_ble_enabled(false, "BLE disabled");
     app_backend_update_time_snapshot();
     ESP_LOGI(TAG, "backend started");
     ESP_LOGI(TAG, "APP_BACKEND_SELFTEST: store PASS");
@@ -274,6 +379,14 @@ esp_err_t app_backend_weather_refresh_async(void)
 
 esp_err_t app_backend_ota_check_async(void)
 {
+    TickType_t now = xTaskGetTickCount();
+
+    if ((s_last_ota_check_post_tick != 0) &&
+        ((int32_t)(now - s_last_ota_check_post_tick) < pdMS_TO_TICKS(APP_BACKEND_OTA_CHECK_DEBOUNCE_MS))) {
+        return ESP_OK;
+    }
+
+    s_last_ota_check_post_tick = now;
     return app_backend_post_simple(APP_BACKEND_CMD_OTA_CHECK);
 }
 
@@ -285,6 +398,20 @@ esp_err_t app_backend_ota_confirm_async(void)
 esp_err_t app_backend_ota_restart_async(void)
 {
     return app_backend_post_simple(APP_BACKEND_CMD_OTA_RESTART);
+}
+
+esp_err_t app_backend_ble_set_enabled_async(bool enabled)
+{
+    app_backend_cmd_t cmd = {
+        .id = APP_BACKEND_CMD_BLE_SET_ENABLED,
+        .ble_enabled = enabled,
+    };
+    return app_backend_post_cmd(&cmd);
+}
+
+bool app_backend_ble_is_enabled(void)
+{
+    return s_ble_enabled;
 }
 
 esp_err_t app_backend_get_snapshot(app_backend_snapshot_t *out)

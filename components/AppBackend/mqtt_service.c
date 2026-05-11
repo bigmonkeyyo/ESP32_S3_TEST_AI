@@ -304,6 +304,9 @@ esp_err_t mqtt_service_start(void)
         .credentials.client_id = ONENET_DEVICE_NAME,
         .credentials.username = ONENET_PRODUCT_ID,
         .credentials.authentication.password = password,
+        .task.stack_size = 4096,
+        .buffer.size = 768,
+        .buffer.out_size = 768,
     };
 
     s_client = esp_mqtt_client_init(&mqtt_cfg);

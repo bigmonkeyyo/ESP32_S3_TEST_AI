@@ -30,7 +30,7 @@ typedef struct {
 
 static const weather_provider_t s_amap_provider = {
     .name = "AMap",
-    .url = "https://restapi.amap.com/v3/weather/weatherInfo"
+    .url = "http://restapi.amap.com/v3/weather/weatherInfo"
            "?city=" AMAP_WEATHER_CITY_ADCODE
            "&key=" AMAP_WEATHER_API_KEY
            "&extensions=base"

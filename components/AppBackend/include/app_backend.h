@@ -16,4 +16,6 @@ esp_err_t app_backend_weather_refresh_async(void);
 esp_err_t app_backend_ota_check_async(void);
 esp_err_t app_backend_ota_confirm_async(void);
 esp_err_t app_backend_ota_restart_async(void);
+esp_err_t app_backend_ble_set_enabled_async(bool enabled);
+bool app_backend_ble_is_enabled(void);
 esp_err_t app_backend_get_snapshot(app_backend_snapshot_t *out);

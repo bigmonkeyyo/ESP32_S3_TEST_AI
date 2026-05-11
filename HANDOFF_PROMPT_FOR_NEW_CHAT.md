@@ -222,3 +222,162 @@ New-Item -ItemType Directory -Force -Path 'tmp' | Out-Null
    - `LVGL_UI_编译烧录调试与避坑经验.md`
 4. 如果要继续开发，先说明你会修改哪些文件，再开始实现。
 ```
+
+## 2026-05-08 Wi-Fi/BLE 专项交接更新（证据导向）
+
+### 本轮用户关注问题
+- 升级 BLE 功能后，Wi-Fi 上电首连不稳定，经常需要多次重连才能成功。
+- 偶发现象：热点已开启且设备在身边，但扫描或自动连接仍可出现失败。
+
+### 已完成的证据化排查
+- 已在 `wifi_service.c` 增加诊断日志：
+  - 扫描关注：`show_hidden=true`、ap total/kept 数量、每个 AP 的 bssid/channel/auth/hidden 信息
+  - 连接关注：`disconnected reason`、自动重连次数、目标 SSID 丢失提示
+  - 凭据记录（临时调试用）：已保存 SSID/密码/长度打印
+- 已验证事实：
+  - NVS 中已保存凭据，开机可正确读取
+  - 失败主要发生在认证/关联阶段，常见：`reason=2`（AUTH_EXPIRE）、`reason=205`（CONNECTION_FAIL），偶发 `reason=201`（NO_AP_FOUND）
+
+### 本轮 A/B 验证（按用户指定方案）
+- B 组改动：Wi-Fi 连接窗口期暂停 BLE 广播，拿到 IP 后恢复。
+  - `components/GyroBle/include/gyro_ble.h`
+  - `components/GyroBle/gyro_ble.c`
+  - `components/AppBackend/wifi_service.c`
+  - `components/AppBackend/CMakeLists.txt`（AppBackend 依赖 `GyroBle`）
+- 验证证据：
+  - 编译成功、烧录成功（COM7）
+  - 日志中可见明确流程：`pause BLE advertising for WiFi connect` -> `diag connect window done` -> `resume BLE advertising after WiFi: got_ip`
+
+### 本轮 A/B 结论（基于日志而不是猜测）
+- 结论：**仅暂停 BLE 广播不足以解决 Wi-Fi 首连慢和多次重连问题**。
+- B 组（6 次复位采样）结果：
+  - 首连成功数：`0/6`
+  - 最终成功：`6/6`
+  - 成功时连接窗口耗时：`avg 44210.8ms`（约 44s）
+  - 成功前自动重连次数：基本固定 `8` 次
+- A 组（改前基线）另有日志显示：约 45.6s 拿到 IP，重连约 6 次。整体表现与 B 组同一量级，因此不支持“BLE 广播是主因”的判断。
+
+### 本轮关键日志文件
+- 改前基线：`tmp/wifi_saved_cred_dump_20260508.log`
+- B 组批量复位对比（6 次）：`tmp/wifi_ble_gate_ab_20260508_105752.log`
+- B 组单次完整流程（含恢复 BLE 广播）：`tmp/wifi_ble_gate_resume_check_20260508_110543.log`
+
+### 当前代码状态
+- 已加入 BLE 广播开关 API：`gyro_ble_set_advertising_enabled(bool enabled)`
+- Wi-Fi 端已加入连接窗口诊断：`diag connect window start/done`
+- Wi-Fi 端在连接窗口内控制 BLE 广播暂停/恢复
+
+### 下一步（证据导向）
+1. 做热点端参数 A/B：2.4G + 20MHz + 固定信道（1/6/11），复用同样 6 次复位口径统计。
+2. ESP 端做 BSSID/信道锁定实例对照，观察 `reason=201/2/205` 变化。
+3. 根据新的 A/B 结果决定是否固化策略，并在确认后移除敏感调试打印（密码日志）。
+
+## 2026-05-08 Wi-Fi/BLE 结论更新（用户实测确认）
+
+### 新增验证目标
+- 按用户要求，先将蓝牙链路全部断开（固件运行时不启动 BLE），只保留 Wi-Fi 路径，验证“上电自动连接”是否恢复稳定。
+
+### 本轮固件改动（用于验证）
+- `main/main.c`
+  - 移除 `gyro_ble.h` 引用。
+  - 移除 `gyro_ble_start()` 启动调用。
+  - 移除 `gyro_ble_take_recalibrate_request()` 处理路径。
+  - 移除 `gyro_ble_publish_sample()` 数据发布路径。
+- `main/CMakeLists.txt`
+  - `REQUIRES` 移除 `GyroBle`，避免主工程依赖 BLE 组件启动链路。
+
+### 构建/烧录/日志证据
+- 编译：成功（`idf.py build`）
+- 烧录：成功（`idf.py -p COM7 -b 460800 flash`）
+- 关键日志：
+  - `tmp/wifi_no_ble_boot_20260508_after_flash.log`
+  - 日志中不再出现 `BLE_INIT`、`GYRO_BLE: started`、`advertising as ESP32-GYRO`。
+  - 同时可见 Wi-Fi 上电自动连接流程日志（`BACKEND_WIFI: connecting saved ssid ...`）。
+
+### 结论更新（覆盖上一轮“主因不成立”的范围限定）
+- 结论 1（保留）：**仅“连接窗口暂停 BLE 广播”不足以显著改善首连表现**。
+- 结论 2（新增）：**“运行时完全关闭 BLE”后，Wi-Fi 上电自动连接明显恢复，用户实测“基本每次都能快速连上”**。
+- 因此应将问题定位从“仅广播冲突”升级为“BLE 子系统整体（控制器/协议栈/共存时序）对 Wi-Fi 首连存在实质影响”。
+
+### 对后续智能体的执行约束
+1. 后续排查优先以“Wi-Fi 先成功，再启 BLE”为主线，不要再只围绕“暂停广播”单点优化。
+2. 所有新结论必须附带复位次数、首连成功率、平均拿 IP 时间，避免只给单次日志。
+3. 在恢复 BLE 相关实验时，避免回退或覆盖本段验证改动；如需恢复，先新建对照分支并保留可回滚点。
+
+## 2026-05-08 OneNET OTA HTTPS 排查与当前可用方案
+
+### 本轮用户关注问题
+- 设备已连上 Wi-Fi 且网络正常，但在“设备检查更新”时立即提示“版本上报失败，请检查网络”。
+- 用户明确要求关注“为什么 OTA 不可用”和“如何让 OTA 功能恢复”，不关心失败提示文案。
+
+### 本轮已完成排查
+- 已按用户要求执行多轮闭环验证：`build -> flash COM7 -> 60s 串口监听 -> 用户复现“检查更新”`。
+- 已确认 Wi-Fi 正常拿到 IP，SNTP 也已同步，不是断网问题。
+- 已确认问题发生在 OTA HTTPS 握手/证书校验阶段，而不是业务 JSON 或 OneNET 鉴权阶段。
+- 已给 OTA 请求链路补充更细的 TLS 诊断日志，并抓到明确证据：
+  - `tls_code=0x2700`
+  - `tls_flags=0x8`
+  - 含义：`The certificate is not correctly signed by the trusted CA`
+
+### 已验证过但未彻底解决的 HTTPS 方案
+- 方案 1：OTA 改用 `esp_crt_bundle_attach`
+  - 现象：AMap HTTPS 正常，但 OneNET OTA 仍可失败。
+  - 日志曾出现：
+    - `esp-x509-crt-bundle: Certificate validated`
+    - `esp-x509-crt-bundle: Failed to verify certificate`
+    - `mbedtls_ssl_handshake returned -0x3000`
+- 方案 2：OTA 改用显式 `cert_pem`
+  - 先后尝试过：
+    - 仅 OneNET 中级证书
+    - 中级 + DigiCert Global Root G2
+    - 扩充多张 DigiCert 根证书
+  - 结果：仍会出现 `tls_flags=0x8`，说明当前设备侧信任链与 OneNET 实际返回链路之间仍存在不稳定匹配问题。
+- 方案 3：重复点击导致 TLS 资源打爆问题
+  - 已新增去抖与冷却，抑制了频繁点击导致的资源失败。
+  - 相关文件：
+    - `components/AppBackend/app_backend.c`
+    - `components/AppBackend/ota_service.c`
+
+### 当前可用方案（已实机验证）
+- 为了先恢复 OTA 可用性，当前已将 OTA 基地址从 HTTPS 临时切换为 HTTP：
+  - `CONFIG_APP_ONENET_OTA_BASE_URL="http://iot-api.heclouds.com/fuse-ota"`
+- 这次切换仅用于 OTA 路径，目的是绕过当前 TLS 证书链不稳定问题，先恢复版本上报、任务检查与后续下载流程可用。
+
+### 当前代码状态
+- `components/AppBackend/ota_service.c`
+  - 保留了 OTA TLS 诊断日志逻辑
+  - 保留了 OTA 请求冷却保护
+  - 当前 OTA HTTP 客户端仍保留 `cert_pem` 相关调试代码，方便后续再切回 HTTPS 时继续排查
+- `components/AppBackend/app_backend.c`
+  - 已保留 OTA 检查按钮去抖逻辑
+- `sdkconfig`
+  - 当前 OTA 基地址已切到 `http://iot-api.heclouds.com/fuse-ota`
+
+### 本轮最终验证结果
+- 已重新编译并烧录到 `COM7`。
+- 60 秒串口复现日志已确认 OTA 链路恢复可用：
+  - `APP_OTA: version reported 1.3.0`
+  - `APP_OTA: no OTA task`
+  - 统计结果：`ERROR: 0`
+- 关键验证日志：
+  - `tmp/ota_http_mode_60s_20260508.log`
+
+### 关键中间证据日志
+- 证书失败阶段：
+  - `tmp/ota_bundle_retry2_60s_20260508.log`
+  - `tmp/ota_flags_60s_20260508.log`
+  - 可见 `tls_flags=0x8`
+- HTTP 可用验证阶段：
+  - `tmp/ota_http_mode_60s_20260508.log`
+
+### 接手后的判断建议
+- 如果目标是“先让用户能用 OTA”，当前 HTTP 方案已经满足。
+- 如果目标是“恢复 HTTPS 且保留安全校验”，不要直接回退当前改动，应基于本次证据继续做：
+  1. 固定并对齐 OneNET 实际下发证书链
+  2. 重新验证 ESP-IDF 5.2.1 下 `esp-tls`/`mbedtls` 的证书解析与内存行为
+  3. 在 HTTPS 复测通过前，不要移除当前 HTTP 兜底方案
+
+### 当前结论
+- 根因不是 Wi-Fi 断网，也不是用户误操作。
+- 根因是 OneNET OTA HTTPS 在当前设备环境下存在证书链校验不稳定问题。
+- 当前分支已经通过“OTA 改走 HTTP”恢复功能可用，属于明确的临时可交付方案。

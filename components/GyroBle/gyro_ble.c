@@ -7,6 +7,7 @@
 #include "freertos/semphr.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_bt.h"
 #include "host/ble_gatt.h"
 #include "host/ble_gap.h"
 #include "host/ble_hs.h"
@@ -32,6 +33,7 @@ static uint16_t s_quat_val_handle;
 static uint16_t s_ctrl_val_handle;
 static bool s_started;
 static bool s_streaming_enabled = true;
+static bool s_advertising_enabled = true;
 static bool s_pose_notify_enabled;
 static bool s_imu_notify_enabled;
 static bool s_quat_notify_enabled;
@@ -314,6 +316,19 @@ static void gyro_ble_advertise(void)
     ESP_LOGI(TAG, "advertising as %s", GYRO_BLE_DEVICE_NAME);
 }
 
+static void gyro_ble_restart_advertise_if_needed(void)
+{
+    if (!s_started || !s_advertising_enabled) {
+        return;
+    }
+
+    if (s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        if (!ble_gap_adv_active()) {
+            gyro_ble_advertise();
+        }
+    }
+}
+
 static int gyro_ble_gap_event(struct ble_gap_event *event, void *arg)
 {
     (void)arg;
@@ -331,7 +346,9 @@ static int gyro_ble_gap_event(struct ble_gap_event *event, void *arg)
             ESP_LOGI(TAG, "connected, conn_handle=%u", (unsigned)event->connect.conn_handle);
         } else {
             ESP_LOGW(TAG, "connect failed, status=%d", event->connect.status);
-            gyro_ble_advertise();
+            if (s_advertising_enabled) {
+                gyro_ble_advertise();
+            }
         }
         return 0;
 
@@ -344,11 +361,15 @@ static int gyro_ble_gap_event(struct ble_gap_event *event, void *arg)
             xSemaphoreGive(s_lock);
         }
         ESP_LOGI(TAG, "disconnected, reason=%d", event->disconnect.reason);
-        gyro_ble_advertise();
+        if (s_advertising_enabled) {
+            gyro_ble_advertise();
+        }
         return 0;
 
     case BLE_GAP_EVENT_ADV_COMPLETE:
-        gyro_ble_advertise();
+        if (s_advertising_enabled) {
+            gyro_ble_advertise();
+        }
         return 0;
 
     case BLE_GAP_EVENT_SUBSCRIBE:
@@ -404,7 +425,9 @@ static void gyro_ble_on_sync(void)
                  addr_val[5], addr_val[4], addr_val[3],
                  addr_val[2], addr_val[1], addr_val[0]);
     }
-    gyro_ble_advertise();
+    if (s_advertising_enabled) {
+        gyro_ble_advertise();
+    }
 }
 
 static void gyro_ble_host_task(void *param)
@@ -412,6 +435,19 @@ static void gyro_ble_host_task(void *param)
     (void)param;
     nimble_port_run();
     nimble_port_freertos_deinit();
+}
+
+static void gyro_ble_cleanup_controller_state(void)
+{
+    esp_bt_controller_status_t status = esp_bt_controller_get_status();
+
+    if (status == ESP_BT_CONTROLLER_STATUS_ENABLED) {
+        (void)esp_bt_controller_disable();
+        status = esp_bt_controller_get_status();
+    }
+    if (status == ESP_BT_CONTROLLER_STATUS_INITED) {
+        (void)esp_bt_controller_deinit();
+    }
 }
 
 esp_err_t gyro_ble_start(void)
@@ -427,9 +463,11 @@ esp_err_t gyro_ble_start(void)
         return ESP_ERR_NO_MEM;
     }
 
+    gyro_ble_cleanup_controller_state();
     rc = nimble_port_init();
     if (rc != ESP_OK) {
         ESP_LOGE(TAG, "nimble_port_init failed: %d", rc);
+        gyro_ble_cleanup_controller_state();
         return ESP_FAIL;
     }
     ble_hs_cfg.reset_cb = gyro_ble_on_reset;
@@ -460,6 +498,52 @@ esp_err_t gyro_ble_start(void)
 
     s_started = true;
     ESP_LOGI(TAG, "started");
+    return ESP_OK;
+}
+
+esp_err_t gyro_ble_set_advertising_enabled(bool enabled)
+{
+    if (!s_started || (s_lock == NULL)) {
+        s_advertising_enabled = enabled;
+        return ESP_OK;
+    }
+
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(200)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    s_advertising_enabled = enabled;
+    xSemaphoreGive(s_lock);
+
+    if (!enabled) {
+        if (ble_gap_adv_active()) {
+            (void)ble_gap_adv_stop();
+        }
+        if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+            (void)ble_gap_terminate(s_conn_handle, 0x13);
+        }
+        ESP_LOGI(TAG, "advertising disabled");
+    } else {
+        gyro_ble_restart_advertise_if_needed();
+        ESP_LOGI(TAG, "advertising enabled");
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t gyro_ble_set_streaming_enabled(bool enabled)
+{
+    if (!s_started || (s_lock == NULL)) {
+        s_streaming_enabled = enabled;
+        return ESP_OK;
+    }
+
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(200)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    s_streaming_enabled = enabled;
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "streaming %s", enabled ? "enabled" : "disabled");
     return ESP_OK;
 }
 

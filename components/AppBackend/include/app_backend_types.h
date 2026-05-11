@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define APP_BACKEND_MAX_APS              8
+#define APP_BACKEND_MAX_APS              16
 #define APP_BACKEND_SSID_MAX_LEN         32
 #define APP_BACKEND_PASSWORD_MAX_LEN     64
 #define APP_BACKEND_IP_MAX_LEN           16
@@ -65,6 +65,7 @@ typedef struct {
 
 typedef struct {
     app_backend_wifi_state_t wifi_state;
+    bool ble_enabled;
     app_backend_wifi_ap_t aps[APP_BACKEND_MAX_APS];
     size_t ap_count;
     char connected_ssid[APP_BACKEND_SSID_MAX_LEN + 1];

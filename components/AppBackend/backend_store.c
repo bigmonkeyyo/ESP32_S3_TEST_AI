@@ -34,6 +34,7 @@ static void snapshot_set_defaults(void)
 
     memset(&s_snapshot, 0, sizeof(s_snapshot));
     s_snapshot.wifi_state = APP_BACKEND_WIFI_IDLE;
+    s_snapshot.ble_enabled = false;
     s_snapshot.rssi = 0;
     copy_text(s_snapshot.ip, sizeof(s_snapshot.ip), "--");
     copy_text(s_snapshot.now_time, sizeof(s_snapshot.now_time), "--:--");
@@ -99,6 +100,21 @@ void backend_store_set_wifi_state(app_backend_wifi_state_t state, const char *me
 
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
         s_snapshot.wifi_state = state;
+        if (message != NULL) {
+            copy_text(s_snapshot.message, sizeof(s_snapshot.message), message);
+        }
+        xSemaphoreGive(s_mutex);
+    }
+}
+
+void backend_store_set_ble_enabled(bool enabled, const char *message)
+{
+    if (backend_store_init() != ESP_OK) {
+        return;
+    }
+
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+        s_snapshot.ble_enabled = enabled;
         if (message != NULL) {
             copy_text(s_snapshot.message, sizeof(s_snapshot.message), message);
         }

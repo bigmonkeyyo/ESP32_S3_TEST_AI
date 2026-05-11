@@ -170,3 +170,82 @@ APP_OTA: version reported 1.3.0
 - Web Bluetooth connection: verified with Chrome/Edge flow.
 - Realtime updates: posture and state panel refresh continuously after BLE connect.
 - Regression checks: existing LVGL main pages remain available after BLE feature integration.
+
+---
+
+## Incremental Update - 2026-05-09 (QMI8658A Delay Unit Fix)
+
+### Scope
+
+- Fixed QMI8658A startup delay units in `components/BSP/QMI8658A/qmi8658a.c`.
+- Added local helper `qmi8658_delay_ms()` to convert millisecond waits through `pdMS_TO_TICKS()`.
+- Replaced bare numeric `vTaskDelay(...)` calls in the QMI8658A driver, including reset, calibration, Ctrl9 command polling, and sensor-enable settle waits.
+
+### Root Cause
+
+- The driver used calls such as `vTaskDelay(2000)` while the project runs with `CONFIG_FREERTOS_HZ=100`.
+- `vTaskDelay()` expects FreeRTOS ticks, not milliseconds.
+- At 100 Hz, `vTaskDelay(2000)` became about 20 seconds, so the QMI8658A reset and calibration path added roughly 40 seconds before gyro output started.
+
+### Validation Snapshot
+
+- Static check: pass; no bare numeric `vTaskDelay(...)` remains in `components/BSP/QMI8658A/qmi8658a.c`.
+- Build: pass (`idf.py --no-hints --no-ccache -C D:\ESP32-APP\18_touch build`).
+- Flash: pass on `COM7` at `460800`; flash log showed `Hash of data verified` and `Hard resetting via RTS pin`.
+- Serial log: `tmp\qmi8658_delay_ms_fix_com7.log`.
+- Runtime evidence after fix:
+  - `qmi8658` WhoAmI detected at `2.788s`.
+  - `QMI8658A init ok` at `4.808s`.
+  - `GYRO: zero calibrated` at `8.728s`.
+  - Continuous `GYRO` output followed normally.
+- Failure keyword scan: pass; no `Guru Meditation`, `task_wdt`, `panic`, `abort`, `backtrace`, `stack overflow`, or `SCREEN_UNLOADED`.
+
+### Current Result
+
+- Gyro startup was reduced from about 44 seconds to about 8.7 seconds on the verified COM7 run.
+- This change fixes only the tick/millisecond unit bug; further calibration-duration optimization remains a separate task if needed.
+
+---
+
+## Incremental Update - 2026-05-09 (Wi-Fi/BLE Memory Pressure + Weather Sync)
+
+### Scope
+
+- Enabled the ESP32-S3 onboard 8MB PSRAM in `sdkconfig` and added it to the system heap.
+- Switched LVGL allocations to the system malloc path so page objects can use PSRAM instead of a fixed internal LVGL heap.
+- Reduced backend online task stack usage and tuned MQTT task/buffer sizing to preserve internal RAM.
+- Increased the reserved internal/DMA pool for Wi-Fi, BLE, I2C, task stacks, and LCD DMA-sensitive allocations.
+- Changed weather sync from AMap HTTPS to HTTP to avoid TLS handshake memory pressure after Wi-Fi, BLE, and MQTT are already running.
+- Updated I2C transfer handling so transient command allocation/write failures return errors instead of forcing a whole-device abort.
+
+### Root Cause
+
+- The hardware reports `Embedded PSRAM 8MB`, but the active `sdkconfig` had PSRAM disabled.
+- With Wi-Fi + BLE + LVGL + MQTT running together, internal RAM became too tight for small internal-only allocations.
+- Serial evidence before the fix included:
+  - `BLE_INIT: Malloc failed`
+  - `mqtt_client: Error create mqtt task`
+  - `i2c command link malloc error`
+  - SNTP/HTTP allocation failures and reset/assert paths
+- Weather sync used HTTPS with certificate bundle verification, which required more TLS memory than remained after the online stack was active.
+
+### Validation Snapshot
+
+- Static memory config check: pass.
+- Build: pass (`idf.py --no-hints --no-ccache -C D:\ESP32-APP\18_touch build`).
+- Flash: pass on `COM7` at `460800`.
+- Serial logs:
+  - `tmp\wifi_ip_reset_memory_tuned_com7.log`
+  - `tmp\weather_http_fix_com7.log`
+- Runtime evidence:
+  - PSRAM initialized: `Found 8MB PSRAM device` and `Adding pool of 8192K of PSRAM memory to heap allocator`.
+  - BLE prepared after Wi-Fi IP without BLE malloc failure.
+  - MQTT connected and published status after BLE stack preparation.
+  - Weather sync succeeded: `BACKEND_WEATHER: AMap weather updated`.
+  - BLE UI switch test reached `GYRO_BLE: streaming enabled` and `advertising enabled`.
+  - No `Guru Meditation`, `abort`, `assert failed`, or MQTT task-create failure in the final weather verification run.
+
+### Notes
+
+- Final log still shows one early `i2c transfer failed` warning during sensor probing, but it recovers and QMI8658A initializes normally.
+- A later `rst:0x1 POWERON` observed in one earlier long run had no software backtrace or abort log before it, so it looks more like external reset/power behavior than a firmware panic.

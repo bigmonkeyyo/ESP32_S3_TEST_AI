@@ -32,5 +32,7 @@ typedef struct {
 } gyro_ble_sample_t;
 
 esp_err_t gyro_ble_start(void);
+esp_err_t gyro_ble_set_advertising_enabled(bool enabled);
+esp_err_t gyro_ble_set_streaming_enabled(bool enabled);
 void gyro_ble_publish_sample(const gyro_ble_sample_t *sample);
 bool gyro_ble_take_recalibrate_request(void);

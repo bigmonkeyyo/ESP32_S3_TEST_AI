@@ -11,6 +11,7 @@ typedef enum {
     APP_BACKEND_CMD_OTA_CHECK,
     APP_BACKEND_CMD_OTA_CONFIRM,
     APP_BACKEND_CMD_OTA_RESTART,
+    APP_BACKEND_CMD_BLE_SET_ENABLED,
 } app_backend_cmd_id_t;
 
 void app_backend_notify_changed(void);

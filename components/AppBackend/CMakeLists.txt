@@ -26,4 +26,5 @@ idf_component_register(
         mbedtls
         mqtt
         json
+        GyroBle
 )

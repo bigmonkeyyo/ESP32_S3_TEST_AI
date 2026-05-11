@@ -10,7 +10,9 @@
 static lv_obj_t *s_screen = NULL;
 static lv_obj_t *s_location_label = NULL;
 static lv_obj_t *s_wifi_status_label = NULL;
+static lv_obj_t *s_ble_switch = NULL;
 static bool s_nav_pending = false;
+static bool s_ble_syncing = false;
 
 static char s_location[32] = "上海 · 浦东新区";
 
@@ -135,6 +137,47 @@ static lv_obj_t *create_settings_row(
     return row;
 }
 
+static lv_obj_t *create_settings_switch_row(
+    lv_obj_t *parent,
+    lv_coord_t y,
+    uint32_t dot_color,
+    const char *left_text,
+    lv_obj_t **switch_out)
+{
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_t *dot = lv_obj_create(row);
+    lv_obj_t *left = lv_label_create(row);
+    lv_obj_t *sw = lv_switch_create(row);
+
+    lv_obj_set_pos(row, 0, y);
+    lv_obj_set_size(row, 296, 42);
+    lv_obj_set_style_radius(row, 10, 0);
+    lv_obj_set_style_bg_color(row, lv_color_white(), 0);
+    lv_obj_set_style_border_color(row, c_hex(0xD7E7F8), 0);
+    lv_obj_set_style_border_width(row, 1, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_set_size(dot, 8, 8);
+    lv_obj_align(dot, LV_ALIGN_LEFT_MID, 14, 0);
+    lv_obj_set_style_radius(dot, 4, 0);
+    lv_obj_set_style_bg_color(dot, c_hex(dot_color), 0);
+    lv_obj_set_style_border_width(dot, 0, 0);
+    lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_label_set_text(left, left_text);
+    set_label_font_color(left, &ui_font_sc_13, 0x1C2A3A);
+    lv_obj_align(left, LV_ALIGN_LEFT_MID, 32, 0);
+
+    lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -10, 0);
+    lv_obj_set_size(sw, 42, 24);
+
+    if (switch_out != NULL) {
+        *switch_out = sw;
+    }
+    return row;
+}
+
 void page_settings_apply_snapshot(const app_backend_snapshot_t *snapshot)
 {
     if ((s_screen == NULL) || (snapshot == NULL) || (s_wifi_status_label == NULL)) {
@@ -153,6 +196,16 @@ void page_settings_apply_snapshot(const app_backend_snapshot_t *snapshot)
     } else {
         lv_label_set_text(s_wifi_status_label, "点击进入扫描");
         lv_obj_set_style_text_color(s_wifi_status_label, c_hex(0x3D8BFF), 0);
+    }
+
+    if (s_ble_switch != NULL) {
+        s_ble_syncing = true;
+        if (snapshot->ble_enabled) {
+            lv_obj_add_state(s_ble_switch, LV_STATE_CHECKED);
+        } else {
+            lv_obj_clear_state(s_ble_switch, LV_STATE_CHECKED);
+        }
+        s_ble_syncing = false;
     }
 }
 
@@ -228,6 +281,24 @@ static void page_settings_open_gyro_cb(lv_event_t *e)
     page_settings_schedule_nav(SETTINGS_NAV_GYRO);
 }
 
+static void page_settings_ble_switch_cb(lv_event_t *e)
+{
+    bool enabled = false;
+
+    if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) {
+        return;
+    }
+    if (s_ble_syncing || (s_ble_switch == NULL)) {
+        return;
+    }
+
+    enabled = lv_obj_has_state(s_ble_switch, LV_STATE_CHECKED);
+    if (enabled == app_backend_ble_is_enabled()) {
+        return;
+    }
+    (void)app_backend_ble_set_enabled_async(enabled);
+}
+
 static lv_obj_t *page_settings_create(void)
 {
     lv_obj_t *header = NULL;
@@ -300,7 +371,7 @@ static lv_obj_t *page_settings_create(void)
 
     scroll_content = lv_obj_create(scroll_view);
     lv_obj_set_pos(scroll_content, 0, 0);
-    lv_obj_set_size(scroll_content, 296, 352);
+    lv_obj_set_size(scroll_content, 296, 402);
     lv_obj_set_style_bg_opa(scroll_content, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(scroll_content, 0, 0);
     lv_obj_set_style_pad_all(scroll_content, 0, 0);
@@ -318,11 +389,17 @@ static lv_obj_t *page_settings_create(void)
     row = create_settings_row(scroll_content, 150, 0x3D8BFF, "Gyro Verify", "Enter", 0x3D8BFF, NULL);
     lv_obj_add_event_cb(row, page_settings_open_gyro_cb, LV_EVENT_CLICKED, NULL);
 
-    row = create_settings_row(scroll_content, 200, 0x3D8BFF, "天气刷新频率", "每15分钟", 0x5F738C, NULL);
+    row = create_settings_switch_row(scroll_content, 200, 0x7E57C2, "蓝牙开关", &s_ble_switch);
+    if (s_ble_switch != NULL) {
+        lv_obj_add_event_cb(s_ble_switch, page_settings_ble_switch_cb, LV_EVENT_VALUE_CHANGED, NULL);
+        lv_obj_clear_state(s_ble_switch, LV_STATE_CHECKED);
+    }
+
+    row = create_settings_row(scroll_content, 250, 0x3D8BFF, "天气刷新频率", "每15分钟", 0x5F738C, NULL);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
-    row = create_settings_row(scroll_content, 250, 0x3D8BFF, "语言", "简体中文", 0x5F738C, NULL);
+    row = create_settings_row(scroll_content, 300, 0x3D8BFF, "语言", "简体中文", 0x5F738C, NULL);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
-    row = create_settings_row(scroll_content, 300, 0x3D8BFF, "时区", "Asia/Shanghai", 0x5F738C, NULL);
+    row = create_settings_row(scroll_content, 350, 0x3D8BFF, "时区", "Asia/Shanghai", 0x5F738C, NULL);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
 
     scroll_track = lv_obj_create(s_screen);
@@ -369,7 +446,9 @@ static void page_settings_on_destroy(void)
     s_screen = NULL;
     s_location_label = NULL;
     s_wifi_status_label = NULL;
+    s_ble_switch = NULL;
     s_nav_pending = false;
+    s_ble_syncing = false;
 }
 
 static void page_settings_on_show(void *args)

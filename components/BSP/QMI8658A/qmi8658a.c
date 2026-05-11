@@ -20,6 +20,7 @@
  */
 
 #include "qmi8658a.h"
+#include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -29,6 +30,15 @@ uint8_t g_imu_init = 0;
 qmi8658_state g_imu;
 i2c_obj_t qmi8658a_i2c_master;
 const char* qmi8658a_name = "qmi8658a.c"; 
+
+static void qmi8658_delay_ms(uint32_t ms)
+{
+    TickType_t ticks = pdMS_TO_TICKS(ms);
+    if (ticks == 0) {
+        ticks = 1;
+    }
+    vTaskDelay(ticks);
+}
 
 /**
  * @brief       读取qmi8658a寄存器的数据
@@ -47,8 +57,8 @@ esp_err_t qmi8658a_register_read(const uint8_t reg, uint8_t *data, const size_t 
         {.len = len, .buf = data},
     };
 
-    i2c_transfer(&qmi8658a_i2c_master, QMI8658_ADDR, 2, bufs, I2C_FLAG_WRITE | I2C_FLAG_READ | I2C_FLAG_STOP);
-    return ESP_OK;
+    return i2c_transfer(&qmi8658a_i2c_master, QMI8658_ADDR, 2, bufs,
+                        I2C_FLAG_WRITE | I2C_FLAG_READ | I2C_FLAG_STOP);
 }
 
 /**
@@ -67,8 +77,7 @@ static esp_err_t qmi8658a_register_write_byte(uint8_t reg, uint8_t data)
         {.len = 1, .buf = &data},
     };
 
-    i2c_transfer(&qmi8658a_i2c_master, QMI8658_ADDR, 2, bufs, I2C_FLAG_STOP);
-    return ESP_OK;
+    return i2c_transfer(&qmi8658a_i2c_master, QMI8658_ADDR, 2, bufs, I2C_FLAG_STOP);
 }
 
 /**
@@ -120,7 +129,7 @@ uint8_t qmi8658_calibration(void)
     uint8_t sta = 0;
     qmi8658a_register_write_byte(Register_Ctrl7, 0x00);   /* 关闭陀螺仪、加速度计 */
     qmi8658a_register_write_byte(Register_Ctrl9, 0xA2);
-    vTaskDelay(2000);
+    qmi8658_delay_ms(2000);
     qmi8658a_register_read(Register_COD_Status,&sta,1);
 
     if (sta == 0x00)
@@ -141,9 +150,9 @@ uint8_t qmi8658_calibration(void)
 void qmi8658_reset(void)
 {
     qmi8658a_register_write_byte(Register_Reset, 0xB0); /* 复位QMI8658 */
-    vTaskDelay(2000);
+    qmi8658_delay_ms(2000);
     qmi8658a_register_write_byte(Register_Reset, 0x00);
-    vTaskDelay(5);
+    qmi8658_delay_ms(5);
 }
 
 /**
@@ -341,7 +350,7 @@ int qmi8658_send_ctl9cmd(enum Ctrl9Command cmd)
         qmi8658a_register_read(status_reg, &status1, 1);
         while (((status1 & cmd_done) != cmd_done) && (count++ < 100))         /* 读取statusINT直到bit7为1*/
         {
-            vTaskDelay(1);
+            qmi8658_delay_ms(1);
             qmi8658a_register_read(status_reg, &status1, 1);
         }
         if(count < 100)
@@ -359,7 +368,7 @@ int qmi8658_send_ctl9cmd(enum Ctrl9Command cmd)
 
         while (((status1 & cmd_done) == cmd_done) && (count++ < 100))         /* 读取statusINT直到bit7为0 */
         {
-            vTaskDelay(1);    
+            qmi8658_delay_ms(1);
             qmi8658a_register_read(status_reg, &status1, 1);
         }
         if(count < 100)
@@ -600,7 +609,7 @@ void qmi8658_enablesensors(unsigned char enableFlags)
 #endif
     g_imu.cfg.ensensors = enableFlags & 0x03;
 
-    vTaskDelay(2);
+    qmi8658_delay_ms(2);
 }
 
 /**
