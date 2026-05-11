@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "ui_page_anim.h"
 #include "ui_page_iface.h"
+#include "ui_mirror.h"
 #include "ui_page_registry.h"
 #include "ui_page_stack.h"
 
@@ -204,6 +205,7 @@ esp_err_t ui_page_push(ui_page_id_t id, void *args, ui_anim_t anim)
     ui_page_call_show(to_desc, args);
 
     ESP_LOGI(UI_MGR_TAG, "PUSH %ld -> %ld depth=%d", (long)from_id, (long)id, ui_page_stack_depth());
+    ui_mirror_notify_page_changed();
     return ESP_OK;
 }
 
@@ -273,6 +275,7 @@ esp_err_t ui_page_pop(ui_anim_t anim)
     ui_page_destroy_if_needed(current_desc);
 
     ESP_LOGI(UI_MGR_TAG, "POP %ld -> %ld depth=%d", (long)current_id, (long)target_id, ui_page_stack_depth());
+    ui_mirror_notify_page_changed();
     return ESP_OK;
 }
 
@@ -317,6 +320,7 @@ esp_err_t ui_page_replace(ui_page_id_t id, void *args, ui_anim_t anim)
         ui_page_anim_load(s_page_roots[new_desc->id], anim);
         ui_page_call_show(new_desc, args);
         ESP_LOGI(UI_MGR_TAG, "REPLACE %ld -> %ld (same) depth=%d", (long)old_id, (long)id, ui_page_stack_depth());
+        ui_mirror_notify_page_changed();
         return ESP_OK;
     }
 
@@ -339,6 +343,7 @@ esp_err_t ui_page_replace(ui_page_id_t id, void *args, ui_anim_t anim)
     ui_page_destroy_if_needed(old_desc);
 
     ESP_LOGI(UI_MGR_TAG, "REPLACE %ld -> %ld depth=%d", (long)old_id, (long)id, ui_page_stack_depth());
+    ui_mirror_notify_page_changed();
     return ESP_OK;
 }
 
@@ -369,5 +374,6 @@ esp_err_t ui_page_back_to_root(ui_anim_t anim)
     }
 
     ESP_LOGI(UI_MGR_TAG, "BACK_TO_ROOT depth=%d", ui_page_stack_depth());
+    ui_mirror_notify_page_changed();
     return ESP_OK;
 }

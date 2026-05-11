@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_bt.h"
 #include "host/ble_gatt.h"
@@ -23,6 +24,8 @@
 #define GYRO_BLE_CMD_START_STREAM 0x01
 #define GYRO_BLE_CMD_STOP_STREAM  0x02
 #define GYRO_BLE_CMD_RECALIBRATE  0x03
+#define GYRO_BLE_UI_FRAME_PAYLOAD_LEN 14U
+#define GYRO_BLE_UI_FRAME_MAX_CHUNKS  255U
 
 static const char *TAG = "GYRO_BLE";
 static uint8_t s_own_addr_type;
@@ -31,19 +34,33 @@ static uint16_t s_pose_val_handle;
 static uint16_t s_imu_val_handle;
 static uint16_t s_quat_val_handle;
 static uint16_t s_ctrl_val_handle;
+static uint16_t s_ui_state_val_handle;
 static bool s_started;
 static bool s_streaming_enabled = true;
 static bool s_advertising_enabled = true;
 static bool s_pose_notify_enabled;
 static bool s_imu_notify_enabled;
 static bool s_quat_notify_enabled;
+static bool s_ui_state_notify_enabled;
 static bool s_recalibrate_pending;
 static uint16_t s_seq;
+static uint8_t s_ui_seq;
 static uint8_t s_pose_frame[GYRO_BLE_FRAME_LEN];
 static uint8_t s_imu_frame[GYRO_BLE_FRAME_LEN];
 static uint8_t s_quat_frame[GYRO_BLE_FRAME_LEN];
+static uint8_t s_ui_state_frame[GYRO_BLE_FRAME_LEN];
 static SemaphoreHandle_t s_lock;
 void ble_store_config_init(void);
+
+static void gyro_ble_log_heap(const char *label)
+{
+    ESP_LOGI(TAG, "heap %s: internal free=%u largest=%u psram free=%u largest=%u",
+             label,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+}
 
 static const ble_uuid128_t s_uuid_service = BLE_UUID128_INIT(
     0x00, 0x10, 0x5a, 0x1f, 0x6e, 0x8b, 0x2b, 0x9f,
@@ -60,6 +77,9 @@ static const ble_uuid128_t s_uuid_quat = BLE_UUID128_INIT(
 static const ble_uuid128_t s_uuid_ctrl = BLE_UUID128_INIT(
     0x00, 0x10, 0x5a, 0x1f, 0x6e, 0x8b, 0x2b, 0x9f,
     0x7b, 0x4a, 0x9d, 0x5c, 0x03, 0x20, 0x3a, 0x9f);
+static const ble_uuid128_t s_uuid_ui_state = BLE_UUID128_INIT(
+    0x00, 0x10, 0x5a, 0x1f, 0x6e, 0x8b, 0x2b, 0x9f,
+    0x7b, 0x4a, 0x9d, 0x5c, 0x05, 0x20, 0x3a, 0x9f);
 
 static void gyro_ble_advertise(void);
 static int gyro_ble_gap_event(struct ble_gap_event *event, void *arg);
@@ -71,6 +91,8 @@ static int gyro_ble_quat_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                                    struct ble_gatt_access_ctxt *ctxt, void *arg);
 static int gyro_ble_ctrl_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                                    struct ble_gatt_access_ctxt *ctxt, void *arg);
+static int gyro_ble_ui_state_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                                       struct ble_gatt_access_ctxt *ctxt, void *arg);
 
 static const struct ble_gatt_svc_def s_gatt_svcs[] = {
     {
@@ -101,6 +123,12 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
                     .access_cb = gyro_ble_ctrl_access_cb,
                     .val_handle = &s_ctrl_val_handle,
                     .flags = BLE_GATT_CHR_F_WRITE,
+                },
+                {
+                    .uuid = &s_uuid_ui_state.u,
+                    .access_cb = gyro_ble_ui_state_access_cb,
+                    .val_handle = &s_ui_state_val_handle,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
                 },
                 {0},
             },
@@ -284,6 +312,27 @@ static int gyro_ble_ctrl_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     return 0;
 }
 
+static int gyro_ble_ui_state_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                                       struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    uint8_t frame[GYRO_BLE_FRAME_LEN];
+    (void)conn_handle;
+    (void)attr_handle;
+    (void)arg;
+
+    if (ctxt->op != BLE_GATT_ACCESS_OP_READ_CHR) {
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+
+    if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+        memcpy(frame, s_ui_state_frame, sizeof(frame));
+        xSemaphoreGive(s_lock);
+    } else {
+        memset(frame, 0, sizeof(frame));
+    }
+    return os_mbuf_append(ctxt->om, frame, sizeof(frame)) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+}
+
 static void gyro_ble_advertise(void)
 {
     struct ble_gap_adv_params adv_params;
@@ -335,12 +384,16 @@ static int gyro_ble_gap_event(struct ble_gap_event *event, void *arg)
 
     switch (event->type) {
     case BLE_GAP_EVENT_CONNECT:
+        ESP_LOGI(TAG, "gap connect event status=%d conn_handle=%u",
+                 event->connect.status, (unsigned)event->connect.conn_handle);
+        gyro_ble_log_heap("gap_connect_event");
         if (event->connect.status == 0) {
             if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
                 s_conn_handle = event->connect.conn_handle;
                 s_pose_notify_enabled = false;
                 s_imu_notify_enabled = false;
                 s_quat_notify_enabled = false;
+                s_ui_state_notify_enabled = false;
                 xSemaphoreGive(s_lock);
             }
             ESP_LOGI(TAG, "connected, conn_handle=%u", (unsigned)event->connect.conn_handle);
@@ -353,11 +406,15 @@ static int gyro_ble_gap_event(struct ble_gap_event *event, void *arg)
         return 0;
 
     case BLE_GAP_EVENT_DISCONNECT:
+        ESP_LOGI(TAG, "gap disconnect event reason=%d conn_handle=%u",
+                 event->disconnect.reason, (unsigned)event->disconnect.conn.conn_handle);
+        gyro_ble_log_heap("gap_disconnect_event");
         if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
             s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
             s_pose_notify_enabled = false;
             s_imu_notify_enabled = false;
             s_quat_notify_enabled = false;
+            s_ui_state_notify_enabled = false;
             xSemaphoreGive(s_lock);
         }
         ESP_LOGI(TAG, "disconnected, reason=%d", event->disconnect.reason);
@@ -373,6 +430,11 @@ static int gyro_ble_gap_event(struct ble_gap_event *event, void *arg)
         return 0;
 
     case BLE_GAP_EVENT_SUBSCRIBE:
+        ESP_LOGI(TAG, "subscribe attr=%u prev_notify=%d cur_notify=%d",
+                 (unsigned)event->subscribe.attr_handle,
+                 event->subscribe.prev_notify,
+                 event->subscribe.cur_notify);
+        gyro_ble_log_heap("gap_subscribe_event");
         if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
             if (event->subscribe.attr_handle == s_pose_val_handle) {
                 s_pose_notify_enabled = event->subscribe.cur_notify != 0;
@@ -383,6 +445,9 @@ static int gyro_ble_gap_event(struct ble_gap_event *event, void *arg)
             } else if (event->subscribe.attr_handle == s_quat_val_handle) {
                 s_quat_notify_enabled = event->subscribe.cur_notify != 0;
                 ESP_LOGI(TAG, "quat notify=%d", s_quat_notify_enabled ? 1 : 0);
+            } else if (event->subscribe.attr_handle == s_ui_state_val_handle) {
+                s_ui_state_notify_enabled = event->subscribe.cur_notify != 0;
+                ESP_LOGI(TAG, "ui state notify=%d", s_ui_state_notify_enabled ? 1 : 0);
             }
             xSemaphoreGive(s_lock);
         }
@@ -390,6 +455,7 @@ static int gyro_ble_gap_event(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_MTU:
         ESP_LOGI(TAG, "mtu updated: %d", event->mtu.value);
+        gyro_ble_log_heap("gap_mtu_event");
         return 0;
 
     default:
@@ -621,6 +687,96 @@ void gyro_ble_publish_sample(const gyro_ble_sample_t *sample)
             }
         }
     }
+}
+
+void gyro_ble_publish_ui_state_json(const char *json)
+{
+    uint8_t frame[GYRO_BLE_FRAME_LEN];
+    uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    uint16_t ui_state_handle = 0;
+    bool notify_ui_state = false;
+    size_t len;
+    size_t chunk_count;
+    uint8_t seq;
+
+    if ((json == NULL) || !s_started) {
+        return;
+    }
+
+    len = strlen(json);
+    if (len > (GYRO_BLE_UI_FRAME_PAYLOAD_LEN * GYRO_BLE_UI_FRAME_MAX_CHUNKS)) {
+        len = GYRO_BLE_UI_FRAME_PAYLOAD_LEN * GYRO_BLE_UI_FRAME_MAX_CHUNKS;
+    }
+    chunk_count = (len + GYRO_BLE_UI_FRAME_PAYLOAD_LEN - 1U) / GYRO_BLE_UI_FRAME_PAYLOAD_LEN;
+    if (chunk_count == 0U) {
+        chunk_count = 1U;
+    }
+
+    ESP_LOGI(TAG, "ui state publish request len=%u chunks=%u",
+             (unsigned)len, (unsigned)chunk_count);
+    gyro_ble_log_heap("ui_state_publish_request");
+
+    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
+        return;
+    }
+
+    seq = s_ui_seq++;
+    if ((s_conn_handle != BLE_HS_CONN_HANDLE_NONE) && s_ui_state_notify_enabled) {
+        conn_handle = s_conn_handle;
+        ui_state_handle = s_ui_state_val_handle;
+        notify_ui_state = true;
+    }
+    xSemaphoreGive(s_lock);
+
+    if (!notify_ui_state) {
+        ESP_LOGI(TAG, "ui state publish skipped: conn=%u notify=%d handle=%u",
+                 (unsigned)conn_handle, notify_ui_state ? 1 : 0, (unsigned)ui_state_handle);
+        return;
+    }
+
+    for (size_t chunk = 0; chunk < chunk_count; ++chunk) {
+        const size_t offset = chunk * GYRO_BLE_UI_FRAME_PAYLOAD_LEN;
+        const size_t remaining = (offset < len) ? (len - offset) : 0U;
+        const size_t payload_len = remaining > GYRO_BLE_UI_FRAME_PAYLOAD_LEN ?
+                                   GYRO_BLE_UI_FRAME_PAYLOAD_LEN : remaining;
+        struct os_mbuf *om = NULL;
+        int rc;
+
+        memset(frame, 0, sizeof(frame));
+        frame[0] = GYRO_BLE_FRAME_VERSION;
+        frame[1] = GYRO_BLE_UI_FRAME_TYPE;
+        frame[2] = seq;
+        frame[3] = (uint8_t)chunk;
+        frame[4] = (uint8_t)chunk_count;
+        frame[5] = (uint8_t)payload_len;
+        if (payload_len > 0U) {
+            memcpy(&frame[6], &json[offset], payload_len);
+        }
+
+        if ((chunk == 0U) || (chunk + 1U == chunk_count)) {
+            ESP_LOGI(TAG, "ui state notify seq=%u chunk=%u/%u payload=%u",
+                     (unsigned)seq,
+                     (unsigned)(chunk + 1U),
+                     (unsigned)chunk_count,
+                     (unsigned)payload_len);
+        }
+
+        if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
+            memcpy(s_ui_state_frame, frame, sizeof(s_ui_state_frame));
+            xSemaphoreGive(s_lock);
+        }
+
+        om = ble_hs_mbuf_from_flat(frame, sizeof(frame));
+        if (om != NULL) {
+            rc = ble_gatts_notify_custom(conn_handle, ui_state_handle, om);
+            if (rc != 0 && rc != BLE_HS_ENOTCONN) {
+                ESP_LOGW(TAG, "ui state notify failed: %d", rc);
+                gyro_ble_log_heap("ui_state_notify_failed");
+                return;
+            }
+        }
+    }
+    gyro_ble_log_heap("ui_state_publish_done");
 }
 
 bool gyro_ble_take_recalibrate_request(void)

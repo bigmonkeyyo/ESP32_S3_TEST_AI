@@ -270,6 +270,8 @@ void app_main(void)
 {
     esp_err_t ret = nvs_flash_init(); /* 鍒濆鍖?NVS */
 
+    ESP_LOGI(TAG, "boot reset_reason=%d", (int)esp_reset_reason());
+
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {
         ESP_ERROR_CHECK(nvs_flash_erase());

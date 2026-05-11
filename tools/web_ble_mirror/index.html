@@ -1,0 +1,1000 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ESP32 UI Mirror</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #eef3f8;
+      --panel: #ffffff;
+      --text: #172231;
+      --muted: #657386;
+      --line: #d9e4ef;
+      --blue: #3d8bff;
+      --cyan: #15b7d9;
+      --green: #2bc670;
+      --red: #d83b45;
+      --amber: #ff9f43;
+      --screen-a: #e7f4ff;
+      --screen-b: #ffebd3;
+      --row-border: #d7e7f8;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--page);
+      color: var(--text);
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: minmax(360px, 520px) minmax(340px, 1fr);
+      gap: 20px;
+      max-width: 1160px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .stage {
+      display: grid;
+      place-items: center;
+      min-height: 520px;
+      background: #f7fbff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 28px;
+    }
+
+    .device-shell {
+      position: relative;
+      width: 356px;
+      height: 276px;
+      padding: 18px;
+      border-radius: 18px;
+      background: #172231;
+      box-shadow: 0 22px 46px rgba(39, 54, 74, 0.24);
+    }
+
+    .device {
+      position: relative;
+      width: 320px;
+      height: 240px;
+      overflow: hidden;
+      border-radius: 14px;
+      background: linear-gradient(90deg, var(--screen-a), var(--screen-b));
+      border: 1px solid var(--row-border);
+    }
+
+    .device.synced {
+      animation: pulse 220ms ease-out;
+    }
+
+    @keyframes pulse {
+      from { box-shadow: inset 0 0 0 2px rgba(61, 139, 255, 0.55); }
+      to { box-shadow: inset 0 0 0 0 rgba(61, 139, 255, 0); }
+    }
+
+    .screen {
+      position: absolute;
+      inset: 0;
+      width: 320px;
+      height: 240px;
+      overflow: hidden;
+    }
+
+    .screen-title {
+      position: absolute;
+      color: #1c2a3a;
+      font-size: 18px;
+      font-weight: 800;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .small {
+      color: #5f738c;
+      font-size: 11px;
+      line-height: 1.2;
+    }
+
+    .time {
+      position: absolute;
+      left: 12px;
+      top: 4px;
+      color: #18314f;
+      font-size: 30px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .right-note {
+      position: absolute;
+      right: 18px;
+      top: 8px;
+      max-width: 176px;
+      text-align: right;
+      color: #214a7a;
+      font-size: 13px;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .right-note.subline {
+      top: 32px;
+      color: #5f738c;
+      font-size: 11px;
+    }
+
+    .weather-panel {
+      position: absolute;
+      left: 12px;
+      top: 62px;
+      width: 296px;
+      height: 106px;
+      border-radius: 12px;
+      border: 1px solid #cfe3f7;
+      background: linear-gradient(90deg, #dff3ff, #ffe9c7);
+    }
+
+    .panel-caption {
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      color: #476c95;
+      font-size: 12px;
+    }
+
+    .weather-main {
+      position: absolute;
+      left: 12px;
+      top: 34px;
+      max-width: 260px;
+      color: #1a3d64;
+      font-size: 24px;
+      font-weight: 800;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .pill {
+      position: absolute;
+      top: 77px;
+      height: 22px;
+      min-width: 58px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .header {
+      position: absolute;
+      left: 12px;
+      top: 8px;
+      width: 296px;
+      height: 34px;
+    }
+
+    .back {
+      position: absolute;
+      left: 0;
+      top: 7px;
+      color: #6a7e95;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .tag {
+      position: absolute;
+      right: 0;
+      top: 6px;
+      height: 22px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #e8f2ff;
+      color: #3f6fa6;
+      font-size: 12px;
+      line-height: 14px;
+    }
+
+    .scroll-view {
+      position: absolute;
+      left: 12px;
+      top: 50px;
+      width: 296px;
+      height: 146px;
+      overflow: hidden;
+    }
+
+    .row {
+      position: absolute;
+      left: 0;
+      width: 296px;
+      height: 42px;
+      border-radius: 10px;
+      background: #ffffff;
+      border: 1px solid var(--row-border);
+    }
+
+    .dot {
+      position: absolute;
+      left: 14px;
+      top: 16px;
+      width: 8px;
+      height: 8px;
+      border-radius: 4px;
+      background: #9aa9ba;
+    }
+
+    .row-left {
+      position: absolute;
+      left: 32px;
+      top: 13px;
+      color: #1c2a3a;
+      font-size: 13px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .row-right {
+      position: absolute;
+      right: 10px;
+      top: 13px;
+      max-width: 156px;
+      text-align: right;
+      color: #1c2a3a;
+      font-size: 13px;
+      line-height: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .switch {
+      position: absolute;
+      right: 10px;
+      top: 9px;
+      width: 42px;
+      height: 24px;
+      border-radius: 12px;
+      background: #c7d5e4;
+    }
+
+    .switch::after {
+      content: "";
+      position: absolute;
+      left: 3px;
+      top: 3px;
+      width: 18px;
+      height: 18px;
+      border-radius: 9px;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    }
+
+    .switch.on {
+      background: var(--blue);
+    }
+
+    .switch.on::after {
+      left: 21px;
+    }
+
+    .scroll-track {
+      position: absolute;
+      right: 12px;
+      top: 62px;
+      width: 3px;
+      height: 132px;
+      border-radius: 2px;
+      background: rgba(217, 234, 251, 0.5);
+    }
+
+    .scroll-thumb {
+      position: absolute;
+      left: 0;
+      top: 8px;
+      width: 3px;
+      height: 34px;
+      border-radius: 2px;
+      background: rgba(137, 185, 240, 0.8);
+    }
+
+    .footer {
+      position: absolute;
+      left: 12px;
+      top: 198px;
+      width: 296px;
+      height: 38px;
+    }
+
+    .btn {
+      position: absolute;
+      height: 38px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .home-btn {
+      top: 172px;
+      height: 40px;
+      font-size: 13px;
+    }
+
+    .gyro-field {
+      position: absolute;
+      left: 12px;
+      top: 46px;
+      width: 296px;
+      height: 182px;
+      border: 1px solid #d0e5f9;
+      border-radius: 10px;
+      background: #fdfeff;
+      overflow: hidden;
+    }
+
+    .anchor {
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      border-radius: 3px;
+      background: #eaf3ff;
+      border: 1px solid #cfe4fa;
+    }
+
+    .ball {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 7px;
+      background: var(--blue);
+      box-shadow: 0 6px 12px rgba(61, 139, 255, 0.3);
+    }
+
+    .progress {
+      position: absolute;
+      left: 11px;
+      top: 194px;
+      width: 296px;
+      height: 5px;
+      border-radius: 3px;
+      background: #dce7f3;
+      overflow: hidden;
+    }
+
+    .bar {
+      height: 100%;
+      width: 0%;
+      background: var(--blue);
+    }
+
+    .side {
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .controls,
+    .inspector {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .controls {
+      display: grid;
+      gap: 14px;
+    }
+
+    .status-line {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 24px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .state-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #9aa9ba;
+    }
+
+    .state-dot.ok {
+      background: var(--green);
+    }
+
+    .state-dot.err {
+      background: var(--red);
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      min-height: 36px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 0 14px;
+      background: var(--blue);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: #fff;
+      color: var(--text);
+      border-color: var(--line);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+      font-size: 13px;
+    }
+
+    .kv div:nth-child(odd) {
+      color: var(--muted);
+    }
+
+    .event-log,
+    pre {
+      max-height: 180px;
+      overflow: auto;
+      margin: 12px 0 0;
+      padding: 12px;
+      background: #0f1722;
+      color: #d7e5f6;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    .event-log {
+      display: grid;
+      gap: 4px;
+    }
+
+    .event-log div {
+      font-family: Consolas, "Microsoft YaHei", monospace;
+    }
+
+    @media (max-width: 900px) {
+      .app {
+        grid-template-columns: 1fr;
+        padding: 16px;
+      }
+
+      .stage {
+        min-height: auto;
+        padding: 18px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .device-shell {
+        transform: scale(0.9);
+        transform-origin: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="stage">
+      <div class="device-shell">
+        <div id="device" class="device">
+          <div id="screen" class="screen"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="side">
+      <div class="controls">
+        <div class="status-line"><span id="stateDot" class="state-dot"></span><span id="stateText">未连接</span></div>
+        <div class="actions">
+          <button id="connectBtn">连接设备</button>
+          <button id="disconnectBtn" class="secondary" disabled>断开</button>
+        </div>
+        <div class="small">服务 UUID 与旧陀螺仪校准页保持一致，当前页面只订阅 UI State 和 pose。</div>
+      </div>
+
+      <div class="inspector">
+        <strong>同步状态</strong>
+        <div class="kv">
+          <div>页面</div><div id="pageValue">--</div>
+          <div>WiFi</div><div id="wifiValue">--</div>
+          <div>BLE</div><div id="bleValue">--</div>
+          <div>OTA</div><div id="otaValue">--</div>
+          <div>帧序号</div><div id="seqValue">--</div>
+          <div>分片</div><div id="chunkValue">--</div>
+          <div>更新时间</div><div id="timeValue">--</div>
+        </div>
+        <div id="eventLog" class="event-log"></div>
+        <pre id="rawJson">{}</pre>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const UUID = {
+      service: "9f3a2000-5c9d-4a7b-9f2b-8b6e1f5a1000",
+      pose: "9f3a2001-5c9d-4a7b-9f2b-8b6e1f5a1000",
+      uiState: "9f3a2005-5c9d-4a7b-9f2b-8b6e1f5a1000",
+    };
+
+    const ui = {
+      device: document.getElementById("device"),
+      screen: document.getElementById("screen"),
+      stateDot: document.getElementById("stateDot"),
+      stateText: document.getElementById("stateText"),
+      connectBtn: document.getElementById("connectBtn"),
+      disconnectBtn: document.getElementById("disconnectBtn"),
+      rawJson: document.getElementById("rawJson"),
+      pageValue: document.getElementById("pageValue"),
+      wifiValue: document.getElementById("wifiValue"),
+      bleValue: document.getElementById("bleValue"),
+      otaValue: document.getElementById("otaValue"),
+      seqValue: document.getElementById("seqValue"),
+      chunkValue: document.getElementById("chunkValue"),
+      timeValue: document.getElementById("timeValue"),
+      eventLog: document.getElementById("eventLog"),
+    };
+
+    let device = null;
+    let server = null;
+    let uiStateChr = null;
+    let poseChr = null;
+    let chunks = new Map();
+    let lastState = null;
+    let lastPage = "";
+    let frameCount = 0;
+    let gyroBall = { x: 0, y: 0 };
+
+    function setStatus(text, mode = "") {
+      ui.stateText.textContent = text;
+      ui.stateDot.className = `state-dot ${mode}`.trim();
+    }
+
+    function addEvent(text) {
+      const line = document.createElement("div");
+      const now = new Date();
+      const stamp = now.toLocaleTimeString("zh-CN", { hour12: false });
+      line.textContent = `${stamp} ${text}`;
+      ui.eventLog.prepend(line);
+      while (ui.eventLog.children.length > 8) {
+        ui.eventLog.lastElementChild.remove();
+      }
+    }
+
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      }[ch]));
+    }
+
+    function wifiText(state) {
+      const map = {
+        idle: "空闲",
+        scanning: "扫描中",
+        connecting: "连接中",
+        connected: "已连接",
+        failed: "连接失败",
+        disconnected: "已断开",
+      };
+      return map[state] || state || "--";
+    }
+
+    function otaText(state) {
+      const map = {
+        idle: "空闲",
+        checking: "检查中",
+        ready: "可升级",
+        downloading: "下载中",
+        applying: "应用中",
+        done: "完成",
+        failed: "失败",
+      };
+      return map[state] || state || "--";
+    }
+
+    function pageTitle(page) {
+      const map = {
+        home: "首页",
+        settings: "设置",
+        status: "设备状态",
+        firmware: "固件版本",
+        gyro: "Gyro Verify",
+        wifi: "WiFi连接",
+        about: "About",
+      };
+      return map[page] || "未知页面";
+    }
+
+    function colorForWifi(state) {
+      if (state === "connected") return "#2bc670";
+      if (state === "connecting" || state === "scanning") return "#3d8bff";
+      if (state === "failed" || state === "disconnected") return "#f25f5c";
+      return "#5f738c";
+    }
+
+    function row(y, dot, left, right, color = "#1c2a3a", extra = "") {
+      return `
+        <div class="row" style="top:${y}px">
+          <div class="dot" style="background:${dot}"></div>
+          <div class="row-left">${esc(left)}</div>
+          ${extra || `<div class="row-right" style="color:${color}">${esc(right)}</div>`}
+        </div>`;
+    }
+
+    function button(x, y, w, h, color, text, cls = "") {
+      return `<div class="btn ${cls}" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;background:${color}">${esc(text)}</div>`;
+    }
+
+    function header(title, tag = "", back = "") {
+      return `
+        <div class="header">
+          ${back ? `<div class="back">${esc(back)}</div>` : ""}
+          <div class="screen-title" style="left:50%;top:8px;transform:translateX(-50%)">${esc(title)}</div>
+          ${tag ? `<div class="tag">${esc(tag)}</div>` : ""}
+        </div>`;
+    }
+
+    function scrollBar(top = 8, height = 34) {
+      return `<div class="scroll-track"><div class="scroll-thumb" style="top:${top}px;height:${height}px"></div></div>`;
+    }
+
+    function renderHome(state) {
+      const city = state.weather?.city || "上海";
+      const condition = state.weather?.condition || "--";
+      const temp = state.weather?.temp || "--";
+      const hint = state.wifi?.state === "connected"
+        ? "联网天气已同步"
+        : (state.message || (state.wifi?.state === "failed" ? "WiFi 已断开" : "等待联网同步"));
+      return `
+        <div class="time">${esc(state.time?.now || "--:--")}</div>
+        <div class="right-note">${esc(`${city} · ${condition}`)}</div>
+        <div class="right-note subline">${esc(hint)}</div>
+        <div class="weather-panel">
+          <div class="panel-caption">当前天气</div>
+          <div class="weather-main">${esc(`${condition}  ${temp}`)}</div>
+          <div class="pill" style="left:12px;background:#66c7ff;color:#083b63">${esc(state.weather?.humidity || "湿度 --")}</div>
+          <div class="pill" style="left:86px;background:#ffd27a;color:#6a3c00">${esc(state.weather?.wind || "风 --")}</div>
+          <div class="pill" style="left:174px;background:#8fe3a9;color:#114d24">${esc(state.weather?.aqi || "AQI --")}</div>
+        </div>
+        ${button(12, 172, 144, 40, "#3d8bff", "进入设置", "home-btn")}
+        ${button(164, 172, 144, 40, "#7c83ff", "设备状态", "home-btn")}`;
+    }
+
+    function renderSettings(state) {
+      const wifi = wifiText(state.wifi?.state);
+      const wifiColor = colorForWifi(state.wifi?.state);
+      const switchClass = state.ble?.enabled ? "switch on" : "switch";
+      return `
+        ${header("设置", "可滚动", "← 返回")}
+        <div class="scroll-view">
+          ${row(0, "#3d8bff", "WiFi连接", state.wifi?.state === "connected" ? "已连接" : "点击进入扫描", wifiColor)}
+          ${row(50, "#ff9f43", "使用地点", state.weather?.city || "上海 · 浦东新区")}
+          ${row(100, "#2bc670", "设备状态", state.wifi?.state === "connected" ? "在线 / 正常" : "离线 / 正常", "#2bc670")}
+          ${row(150, "#3d8bff", "Gyro Verify", "Enter", "#3d8bff")}
+          ${row(200, "#7e57c2", "蓝牙开关", "", "#1c2a3a", `<div class="${switchClass}"></div>`)}
+          ${row(250, "#3d8bff", "天气刷新频率", "每15分钟", "#5f738c")}
+          ${row(300, "#3d8bff", "语言", "简体中文", "#5f738c")}
+          ${row(350, "#3d8bff", "时区", "Asia/Shanghai", "#5f738c")}
+        </div>
+        ${scrollBar()}
+        <div class="footer">
+          ${button(0, 0, 198, 38, "#3d8bff", "保存并返回")}
+          ${button(206, 0, 90, 38, "#15b7d9", "WiFi")}
+        </div>`;
+    }
+
+    function renderWifi(state) {
+      const connected = state.wifi?.state === "connected";
+      const scanning = state.wifi?.state === "scanning";
+      const connecting = state.wifi?.state === "connecting";
+      const primaryText = scanning ? "扫描中" : connecting ? "连接中" : connected ? "断开" : "扫描";
+      const msg = connected ? `已连接 ${state.wifi?.ssid || ""}` : (state.message || wifiText(state.wifi?.state));
+      return `
+        ${header("WiFi连接", "STA", "← 设置")}
+        <div class="scroll-view">
+          ${row(0, connected ? "#2bc670" : "#f25f5c", "当前状态", wifiText(state.wifi?.state), colorForWifi(state.wifi?.state))}
+          ${row(50, "#3d8bff", "SSID", state.wifi?.ssid || "--")}
+          ${row(100, "#3d8bff", "IP地址", state.wifi?.ip || "--")}
+          ${row(150, "#ff9f43", "信号强度", state.wifi?.rssi ?? "--")}
+          ${row(200, "#2bc670", "提示", msg, "#5f738c")}
+        </div>
+        ${scrollBar(10, 44)}
+        <div class="footer">
+          ${button(0, 0, 144, 38, connected ? "#f25f5c" : "#3d8bff", primaryText)}
+          ${button(152, 0, 144, 38, "#15b7d9", "返回设置")}
+        </div>`;
+    }
+
+    function renderStatus(state) {
+      const online = state.wifi?.state === "connected";
+      const rssi = online ? `${state.wifi?.rssi ?? "--"} dBm` : "--";
+      const version = state.ota?.currentVersion || "--";
+      return `
+        <div class="header">
+          <div class="screen-title" style="left:0;top:8px">设备状态</div>
+          <div class="tag" style="background:#ddf8e8;color:#17743d">${online ? "在线" : "离线"}</div>
+        </div>
+        <div class="scroll-view">
+          ${row(0, "#ff9f43", "供电状态", "USB 5V / 0.42A")}
+          ${row(50, "#2bc670", "WiFi信号", rssi, "#2bc670")}
+          ${row(100, "#3d8bff", "IP地址", state.wifi?.ip || "--")}
+          ${row(150, "#ff9f43", "固件版本", version.startsWith("v") || version === "--" ? version : `v${version}`)}
+          ${row(200, "#2bc670", "运行时长", state.time?.uptime || "00:00:00")}
+          ${row(250, "#3d8bff", "内存占用", "63%", "#5f738c")}
+          ${row(300, "#3d8bff", "上次同步", state.time?.lastSync || "--:--", "#5f738c")}
+        </div>
+        ${scrollBar()}
+        <div class="footer">
+          ${button(0, 0, 144, 38, "#15b7d9", "刷新状态")}
+          ${button(152, 0, 144, 38, "#3d8bff", "返回首页")}
+        </div>`;
+    }
+
+    function renderFirmware(state) {
+      const progress = Math.max(0, Math.min(100, Number(state.ota?.progress || 0)));
+      const target = state.ota?.targetVersion || "待检测";
+      const cur = state.ota?.currentVersion || "--";
+      return `
+        ${header("固件版本", "OTA", "← 状态")}
+        <div class="scroll-view" style="top:53px;height:136px">
+          ${row(0, "#3d8bff", "当前版本", cur)}
+          ${row(50, "#ff9f43", "最新版本", target, "#5f738c")}
+          ${row(100, "#2bc670", "升级状态", otaText(state.ota?.state), "#2bc670")}
+          ${row(150, "#3d8bff", "上次检测", state.time?.lastSync || "--:--", "#5f738c")}
+          ${row(200, "#ff9f43", "更新方式", "手动检查", "#5f738c")}
+        </div>
+        ${scrollBar(10, 36)}
+        <div class="progress"><div class="bar" style="width:${progress}%"></div></div>
+        ${button(11, 205, 296, 34, "#3d8bff", state.ota?.state === "checking" ? "检查中" : "检查更新")}`;
+    }
+
+    function renderGyro() {
+      const x = Math.max(0, Math.min(282, ((gyroBall.x + 1) * 282) / 2));
+      const y = Math.max(0, Math.min(168, ((gyroBall.y + 1) * 168) / 2));
+      return `
+        ${header("", "", "← 返回")}
+        <div class="gyro-field">
+          <div class="anchor" style="left:8px;top:8px"></div>
+          <div class="anchor" style="left:282px;top:8px"></div>
+          <div class="anchor" style="left:8px;top:168px"></div>
+          <div class="anchor" style="left:282px;top:168px"></div>
+          <div class="ball" style="left:${x}px;top:${y}px"></div>
+        </div>`;
+    }
+
+    function renderAbout() {
+      return `
+        <div class="screen-title" style="left:50%;top:20px;transform:translateX(-50%)">About</div>
+        <div class="small" style="position:absolute;left:0;top:105px;width:320px;text-align:center">About page sample</div>
+        ${button(90, 170, 140, 46, "#3d8bff", "Back")}`;
+    }
+
+    function renderGeneric(state) {
+      return `
+        ${header(pageTitle(state.page))}
+        <div class="scroll-view">
+          ${row(0, "#3d8bff", "WiFi", wifiText(state.wifi?.state), colorForWifi(state.wifi?.state))}
+          ${row(50, "#7e57c2", "BLE", state.ble?.enabled ? "已开启" : "已关闭")}
+          ${row(100, "#ff9f43", "消息", state.message || "--", "#5f738c")}
+        </div>`;
+    }
+
+    function flashDevice() {
+      ui.device.classList.remove("synced");
+      void ui.device.offsetWidth;
+      ui.device.classList.add("synced");
+    }
+
+    function renderScreen(state) {
+      if (!state) {
+        ui.screen.innerHTML = `
+          <div class="screen-title" style="left:50%;top:64px;transform:translateX(-50%)">等待连接</div>
+          <div class="small" style="position:absolute;left:28px;right:28px;top:104px;text-align:center">请先在设备设置页打开蓝牙，再连接 ESP32-GYRO。</div>`;
+        return;
+      }
+
+      const renderers = {
+        home: renderHome,
+        settings: renderSettings,
+        wifi: renderWifi,
+        status: renderStatus,
+        firmware: renderFirmware,
+        gyro: renderGyro,
+        about: renderAbout,
+      };
+      ui.screen.innerHTML = (renderers[state.page] || renderGeneric)(state);
+      ui.pageValue.textContent = pageTitle(state.page);
+      ui.wifiValue.textContent = wifiText(state.wifi?.state);
+      ui.bleValue.textContent = state.ble?.enabled ? "已开启" : "已关闭";
+      ui.otaValue.textContent = otaText(state.ota?.state);
+      ui.rawJson.textContent = JSON.stringify(state, null, 2);
+      ui.timeValue.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+      flashDevice();
+    }
+
+    function parseI16LE(view, idx) {
+      return view.getInt16(idx, true);
+    }
+
+    function onPoseNotify(event) {
+      const view = event.target.value;
+      if (view.byteLength < 20) return;
+      gyroBall = {
+        x: parseI16LE(view, 12) / 1000,
+        y: parseI16LE(view, 14) / 1000,
+      };
+      if (lastState?.page === "gyro") renderScreen(lastState);
+    }
+
+    function mergeParts(parts) {
+      const total = parts.reduce((sum, part) => sum + part.length, 0);
+      const merged = new Uint8Array(total);
+      let offset = 0;
+      for (const part of parts) {
+        if (!part) throw new Error("missing chunk");
+        merged.set(part, offset);
+        offset += part.length;
+      }
+      return merged;
+    }
+
+    function onUiStateNotify(event) {
+      const view = event.target.value;
+      if (view.byteLength < 20 || view.getUint8(0) !== 1 || view.getUint8(1) !== 1) return;
+
+      const seq = view.getUint8(2);
+      const idx = view.getUint8(3);
+      const count = view.getUint8(4);
+      const len = Math.min(view.getUint8(5), 14);
+      const start = view.byteOffset + 6;
+      const payload = new Uint8Array(view.buffer.slice(start, start + len));
+
+      if (!chunks.has(seq)) {
+        chunks.clear();
+        chunks.set(seq, { count, parts: new Array(count), received: 0 });
+        addEvent(`开始接收 UI 帧 seq=${seq} chunks=${count}`);
+      }
+
+      const entry = chunks.get(seq);
+      if (!entry || idx >= entry.count || entry.parts[idx]) return;
+
+      entry.parts[idx] = payload;
+      entry.received += 1;
+      ui.seqValue.textContent = String(seq);
+      ui.chunkValue.textContent = `${entry.received}/${entry.count}`;
+
+      if (entry.received !== entry.count) return;
+
+      chunks.delete(seq);
+      try {
+        const nextState = JSON.parse(new TextDecoder().decode(mergeParts(entry.parts)));
+        frameCount += 1;
+        lastState = nextState;
+        renderScreen(lastState);
+        setStatus(`已同步 ${frameCount} 帧`, "ok");
+
+        if (lastPage !== nextState.page) {
+          addEvent(`页面切换 ${lastPage || "--"} -> ${nextState.page}`);
+          lastPage = nextState.page;
+        } else {
+          addEvent(`状态刷新 page=${nextState.page}`);
+        }
+      } catch (err) {
+        console.error(err);
+        addEvent(`JSON 解析失败 seq=${seq}: ${err.message || err}`);
+        setStatus("JSON 解析失败", "err");
+      }
+    }
+
+    async function connect() {
+      if (!navigator.bluetooth) {
+        setStatus("浏览器不支持 Web Bluetooth", "err");
+        return;
+      }
+
+      try {
+        setStatus("请求设备中...");
+        addEvent("请求选择 ESP32-GYRO");
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: "ESP32" }],
+          optionalServices: [UUID.service],
+        });
+        device.addEventListener("gattserverdisconnected", onDisconnected);
+
+        setStatus("连接中...");
+        addEvent(`连接 ${device.name || "ESP32"}`);
+        server = await device.gatt.connect();
+        const service = await server.getPrimaryService(UUID.service);
+
+        uiStateChr = await service.getCharacteristic(UUID.uiState);
+        uiStateChr.addEventListener("characteristicvaluechanged", onUiStateNotify);
+        await uiStateChr.startNotifications();
+        addEvent("UI State notify 已订阅");
+
+        try {
+          poseChr = await service.getCharacteristic(UUID.pose);
+          poseChr.addEventListener("characteristicvaluechanged", onPoseNotify);
+          await poseChr.startNotifications();
+          addEvent("Pose notify 已订阅");
+        } catch (err) {
+          console.warn("pose characteristic unavailable", err);
+          addEvent("Pose notify 不可用");
+        }
+
+        ui.connectBtn.disabled = true;
+        ui.disconnectBtn.disabled = false;
+        setStatus("已连接，等待设备状态", "ok");
+      } catch (err) {
+        console.error(err);
+        addEvent(`连接失败: ${err.message || err}`);
+        setStatus(`连接失败: ${err.message || err}`, "err");
+      }
+    }
+
+    async function disconnect() {
+      if (device?.gatt?.connected) {
+        device.gatt.disconnect();
+      }
+      onDisconnected();
+    }
+
+    function onDisconnected() {
+      ui.connectBtn.disabled = false;
+      ui.disconnectBtn.disabled = true;
+      setStatus("已断开");
+      addEvent("连接断开");
+    }
+
+    ui.connectBtn.addEventListener("click", connect);
+    ui.disconnectBtn.addEventListener("click", disconnect);
+    addEvent("页面已加载");
+    renderScreen(null);
+  </script>
+</body>
+</html>

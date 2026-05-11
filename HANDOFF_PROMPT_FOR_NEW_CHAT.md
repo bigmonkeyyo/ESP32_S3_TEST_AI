@@ -381,3 +381,142 @@ New-Item -ItemType Directory -Force -Path 'tmp' | Out-Null
 - 根因不是 Wi-Fi 断网，也不是用户误操作。
 - 根因是 OneNET OTA HTTPS 在当前设备环境下存在证书链校验不稳定问题。
 - 当前分支已经通过“OTA 改走 HTTP”恢复功能可用，属于明确的临时可交付方案。
+
+## 2026-05-11 Web Bluetooth UI 同屏兼容实现
+
+### 本轮目标
+- 在不破坏旧陀螺仪 Web Bluetooth 校准页的前提下，新增“设备 UI 状态同步到网页，由网页重绘同款界面”的第一版能力。
+- 第一版只做状态同屏，不传 LVGL 像素、截图或 bitmap。
+
+### 兼容性约束
+- 旧网页 `web/gyro_ble_viewer.html` 保持不改。
+- 旧 BLE 设备名继续是 `ESP32-GYRO`。
+- 旧 service UUID 保持 `9f3a2000-5c9d-4a7b-9f2b-8b6e1f5a1000`。
+- 旧特征保持：
+  - pose: `9f3a2001-5c9d-4a7b-9f2b-8b6e1f5a1000`
+  - imu: `9f3a2002-5c9d-4a7b-9f2b-8b6e1f5a1000`
+  - ctrl: `9f3a2003-5c9d-4a7b-9f2b-8b6e1f5a1000`
+- 旧控制命令保持：
+  - `0x01` start stream
+  - `0x02` stop stream
+  - `0x03` recalibrate
+
+### 新增实现
+- `components/GyroBle/`
+  - 新增 UI state 特征：`9f3a2005-5c9d-4a7b-9f2b-8b6e1f5a1000`
+  - 新增 `gyro_ble_publish_ui_state_json(const char *json)`
+  - UI state 使用固定 20-byte frame 分片发送 compact JSON。
+- `components/UI/core/ui_mirror.c`
+  - 从 `ui_page_current()` 获取当前页面。
+  - 从 `app_backend_get_snapshot()` 获取 Wi-Fi、天气、OTA、BLE、时间等状态。
+  - 页面变化和 backend snapshot 更新都会触发同步。
+  - 另有 1 秒低频保活发送，方便网页刚连接后自动拿到当前状态。
+- `components/AppBackend/app_backend.c`
+  - backend update callback 从单订阅改为最多 4 个订阅者，保证 `ui_data_bindings` 和 `ui_mirror` 可同时工作。
+- 新网页入口：
+  - `tools/web_ble_mirror/index.html`
+  - 本地启动命令：
+    ```powershell
+    & 'D:\ESP-IDF\Espressif\python_env\idf5.2_py3.11_env\Scripts\python.exe' -m http.server 8765 -d tools\web_ble_mirror
+    ```
+  - 浏览器打开：`http://localhost:8765`
+
+### 已完成验证
+- `idf.py build` 成功。
+- `idf.py -p COM7 -b 460800 flash` 成功。
+- 120 秒串口日志：`tmp\web_ble_mirror_com7.log`
+- 日志中可见：
+  - `APP_BACKEND: backend started`
+  - `APP_BACKEND_SELFTEST: store PASS`
+  - `BACKEND_WIFI: got ip 172.20.10.14`
+  - `GYRO_BLE: started`
+  - `APP_MQTT: connected`
+  - `BACKEND_WEATHER: AMap weather updated`
+  - `GYRO: zero calibrated`
+- 异常关键字扫描未命中：
+  - `Guru Meditation`
+  - `task_wdt`
+  - `panic`
+  - `abort`
+  - `backtrace`
+  - `stack overflow`
+  - `ERROR`
+
+### 后续人工验收
+1. 设备设置页手动打开蓝牙。
+2. 用 Chrome/Edge 打开 `http://localhost:8765` 并连接 `ESP32-GYRO`。
+3. 在设备触摸屏切换 Home / Settings / WiFi / Status / Firmware / Gyro / About，确认网页 500ms 左右同步。
+4. 单独打开旧 `web/gyro_ble_viewer.html`，确认旧姿态流、IMU 流和 `0x03` 重新校准命令仍可用。
+5. 注意：BLE 外设通常只允许单连接，旧网页和新网页需要分别验证，不要同时连接同一设备。
+
+## 2026-05-11 Web Bluetooth UI 同屏复位排查更新
+
+### 用户反馈
+- 设备手动打开蓝牙后，网页端连接成功附近出现设备复位。
+- 本轮目标不是先改协议，而是在关键路径加日志并抓 60 秒串口窗口，定位复位触发点。
+
+### 已加入的调试探针
+- `main/main.c`
+  - 启动时打印 `esp_reset_reason()`：`MAIN: boot reset_reason=...`
+- `components/GyroBle/gyro_ble.c`
+  - GAP connect/disconnect/subscribe/MTU 事件打印。
+  - UI state publish 打印 JSON 长度、分片数量、首尾分片。
+  - UI state publish 前后打印 internal heap / largest block / PSRAM heap。
+- `components/UI/core/ui_mirror.c`
+  - 每次 mirror publish 打印 page、json_len、wifi、ble、ota 状态。
+
+### 已定位问题
+- 初版 `ui_mirror_publish()` 在 LVGL/main 任务栈上放了较大的局部对象：
+  - `app_backend_snapshot_t snapshot`
+  - `char json[1024]`
+- 60 秒复现日志曾出现：
+  - `***ERROR*** A stack overflow in task main has been detected.`
+  - 复位后 `MAIN: boot reset_reason=4`
+- 因此该轮复位的直接证据指向 main/LVGL 任务栈溢出，而不是 BLE GAP connect 本身。
+
+### 已修复
+- `components/UI/core/ui_mirror.c`
+  - 将 publish 用的 snapshot 和 JSON 缓冲改为静态全局缓冲：
+    - `static app_backend_snapshot_t s_publish_snapshot;`
+    - `static char s_publish_json[UI_MIRROR_JSON_MAX];`
+  - `ui_mirror_publish()` 不再在 main/LVGL 任务栈上创建这两个大对象。
+
+### 最新验证
+- `idf.py build` 成功。
+- `idf.py -p COM7 -b 460800 flash` 成功。
+- 60 秒串口日志：`tmp\web_ble_mirror_reset_probe_staticbuf_60s.log`
+- 本轮用户在窗口内执行了：设置页打开 BLE -> 网页连接 -> 订阅 UI state / pose -> 多次页面切换。
+- 日志结果：
+  - 只出现一次上电启动：`rst:0x1 (POWERON)`，`MAIN: boot reset_reason=1`
+  - 未出现 `Guru Meditation`、`panic`、`abort`、`task_wdt`、`stack overflow`、`Backtrace`
+  - 可见网页连接成功：`GYRO_BLE: gap connect event status=0 conn_handle=1`
+  - 可见 UI state 订阅成功：`GYRO_BLE: subscribe attr=27 ... cur_notify=1`、`ui state notify=1`
+  - 可见 pose 订阅继续工作：`GYRO_BLE: subscribe attr=16 ... cur_notify=1`
+  - UI JSON 通知连续发送完成：`ui state notify seq=... chunk=1/28` 到 `chunk=28/28`
+  - heap 稳定在约 `internal free=36KB`、`largest=34KB`，未见持续塌陷。
+
+### 后续注意
+- 当前 60 秒窗口内未复现复位，先不要再把“网页连接即复位”当成已确认事实；优先以栈溢出修复后的固件继续做更长时间人工复测。
+- `GYRO_BLE: ble_gap_adv_set_fields failed: 22` 在本轮日志中出现一次，但随后仍看到 `advertising as ESP32-GYRO` 和网页成功连接；暂不视为本轮复位根因。
+- 如果后续仍复位，下一步重点看：
+  1. 复位前最后一条 `GYRO_BLE` / `UI_MIRROR` 日志。
+  2. 是否再次出现 `stack overflow`，若是则考虑提高 main task stack 或继续迁移 LVGL 循环里的大栈对象。
+  3. UI state 与 pose 同时订阅时 notify 频率较高，必要时把 UI JSON 分片改为跨 tick 发送，而不是一次 publish 连续发完 28 个分片。
+
+### 2026-05-11 网页同屏效果修正
+- 用户确认 BLE 已连接且调试信息存在，但网页没有形成“设备触摸跳转后网页同步切页”的投屏观感。
+- 已确认设备端日志其实已经发出页面变化：
+  - `UI_MIRROR: publish page=settings`
+  - `UI_MIRROR: publish page=status`
+  - `UI_MIRROR: publish page=home`
+  - 同时可见 `ui state notify seq=... chunk=1/28` 到 `chunk=28/28`
+- 因此本次修正集中在 `tools/web_ble_mirror/index.html`：
+  - 将网页中心预览改成固定 320x240 设备坐标渲染，更接近 LVGL 页面布局。
+  - 按实际页面分别重绘 Home / Settings / WiFi / Status / Firmware / Gyro / About。
+  - 新增可见同步状态：帧序号、分片进度、更新时间。
+  - 新增事件日志：能直接看到 `页面切换 -- -> settings`、`settings -> home` 等。
+  - 保留新 UI State notify 和旧 pose notify；不写旧 ctrl 特征，不影响旧陀螺仪校准页。
+- 验证：
+  - `node` 静态检查网页脚本语法通过：`script syntax OK`
+  - 本地服务 `http://localhost:8765` 返回 HTTP 200
+- 本次只改网页文件，不需要重新烧录固件；刷新 `http://localhost:8765` 后重新连接设备即可测试。

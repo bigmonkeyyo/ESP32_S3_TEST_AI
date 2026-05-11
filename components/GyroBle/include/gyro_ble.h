@@ -7,6 +7,7 @@
 
 #define GYRO_BLE_FRAME_VERSION 1U
 #define GYRO_BLE_FRAME_LEN     20U
+#define GYRO_BLE_UI_FRAME_TYPE 1U
 
 typedef struct {
     uint32_t timestamp_ms;
@@ -35,4 +36,5 @@ esp_err_t gyro_ble_start(void);
 esp_err_t gyro_ble_set_advertising_enabled(bool enabled);
 esp_err_t gyro_ble_set_streaming_enabled(bool enabled);
 void gyro_ble_publish_sample(const gyro_ble_sample_t *sample);
+void gyro_ble_publish_ui_state_json(const char *json);
 bool gyro_ble_take_recalibrate_request(void);

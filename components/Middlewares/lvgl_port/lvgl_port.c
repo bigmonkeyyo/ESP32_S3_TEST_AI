@@ -12,6 +12,7 @@
 #include "touch.h"
 #include "ui.h"
 #include "ui_data_bindings.h"
+#include "ui_mirror.h"
 
 #define LVGL_TICK_PERIOD_MS      1
 #define LVGL_TASK_PERIOD_MS      5
@@ -70,6 +71,7 @@ void lvgl_port_start(void)
         const bool wait_too_long = ((esp_timer_get_time() - s_lvgl_start_us) >
                                     (LVGL_BACKLIGHT_FALLBACK_MS * 1000));
         ui_data_bindings_process_pending();
+        ui_mirror_process_pending();
         lv_timer_handler();
         if ((s_first_flush_done || wait_too_long) && !s_backlight_on)
         {

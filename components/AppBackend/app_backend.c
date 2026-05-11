@@ -1,6 +1,7 @@
 #include "app_backend.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
@@ -27,6 +28,7 @@
 #define APP_BACKEND_ONLINE_RETRY_MS 30000
 #define APP_BACKEND_IP_READY_SETTLE_MS 1500
 #define APP_BACKEND_OTA_CHECK_DEBOUNCE_MS 1200
+#define APP_BACKEND_UPDATE_CB_MAX 4
 
 typedef struct {
     app_backend_cmd_id_t id;
@@ -41,8 +43,8 @@ static const char *TAG = "APP_BACKEND";
 static QueueHandle_t s_queue;
 static TaskHandle_t s_task;
 static bool s_started;
-static app_backend_update_cb_t s_update_cb;
-static void *s_update_user_ctx;
+static app_backend_update_cb_t s_update_cbs[APP_BACKEND_UPDATE_CB_MAX];
+static void *s_update_user_ctxs[APP_BACKEND_UPDATE_CB_MAX];
 static volatile bool s_online_retry_pending;
 static volatile TickType_t s_next_online_retry_tick;
 static volatile bool s_ip_ready_task_running;
@@ -284,8 +286,10 @@ static esp_err_t app_backend_post_cmd(const app_backend_cmd_t *cmd)
 
 void app_backend_notify_changed(void)
 {
-    if (s_update_cb != NULL) {
-        s_update_cb(s_update_user_ctx);
+    for (size_t i = 0; i < APP_BACKEND_UPDATE_CB_MAX; ++i) {
+        if (s_update_cbs[i] != NULL) {
+            s_update_cbs[i](s_update_user_ctxs[i]);
+        }
     }
 }
 
@@ -299,9 +303,25 @@ esp_err_t app_backend_post_simple(app_backend_cmd_id_t id)
 
 esp_err_t app_backend_register_update_callback(app_backend_update_cb_t cb, void *user_ctx)
 {
-    s_update_cb = cb;
-    s_update_user_ctx = user_ctx;
-    return ESP_OK;
+    if (cb == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    for (size_t i = 0; i < APP_BACKEND_UPDATE_CB_MAX; ++i) {
+        if (s_update_cbs[i] == cb && s_update_user_ctxs[i] == user_ctx) {
+            return ESP_OK;
+        }
+    }
+
+    for (size_t i = 0; i < APP_BACKEND_UPDATE_CB_MAX; ++i) {
+        if (s_update_cbs[i] == NULL) {
+            s_update_cbs[i] = cb;
+            s_update_user_ctxs[i] = user_ctx;
+            return ESP_OK;
+        }
+    }
+
+    return ESP_ERR_NO_MEM;
 }
 
 esp_err_t app_backend_start(void)
